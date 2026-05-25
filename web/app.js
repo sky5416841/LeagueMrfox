@@ -1,6 +1,9 @@
 'use strict';
 
 let autoAcceptEnabled = false;
+let currentPage    = 1;
+let itemsPerPage   = 20;
+let _lastMatchCount = 0;
 
 // ── 時鐘 ───────────────────────────────────────────────────────────────
 (function tickClock() {
@@ -11,6 +14,19 @@ let autoAcceptEnabled = false;
     el.textContent = `${pad(n.getHours())}:${pad(n.getMinutes())}:${pad(n.getSeconds())}`;
   }, 1000);
 })();
+
+// ── 頁籤切換 ────────────────────────────────────────────────────────────
+function switchTab(tab) {
+  // 隱藏所有 section
+  document.querySelectorAll('.tab-section').forEach(s => s.classList.add('hidden'));
+  // 移除所有 nav active
+  document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
+
+  // 顯示目標 section
+  document.getElementById(`tab-${tab}`).classList.remove('hidden');
+  // 標記目標 nav
+  document.getElementById(`nav-${tab}`).classList.add('active');
+}
 
 // ── 日誌 ───────────────────────────────────────────────────────────────
 eel.expose(append_log);
@@ -45,21 +61,32 @@ function on_match_accepted() {
   setTimeout(() => flash.classList.remove('flashing'), 700);
 }
 
+// 安全取 DOM 元素，避免 null 炸掉整個 updateUI
+function _el(id) {
+  const el = document.getElementById(id);
+  if (!el) console.error(`[LCU] 找不到 DOM 元素: #${id}`);
+  return el;
+}
+function _setText(id, val)  { const e = _el(id); if (e) e.textContent = val; }
+function _setHtml(id, val)  { const e = _el(id); if (e) e.innerHTML   = val; }
+function _setStyle(id, prop, val) { const e = _el(id); if (e) e.style[prop] = val; }
+
 // ── 更新 UI ────────────────────────────────────────────────────────────
 function updateUI(data) {
   if (!data || !data.ok) {
-    document.getElementById('summoner-name').innerHTML =
-      '<span style="color:#7f1d1d;font-size:13px;">── 離線 ──</span>';
-    document.getElementById('summoner-level').textContent = '---';
-    document.getElementById('lcu-port').textContent       = '---';
-    document.getElementById('level-bar').style.width      = '0%';
+    _setHtml('summoner-name', '<span style="color:#7f1d1d;font-size:13px;">── 離線 ──</span>');
+    _setText('summoner-level', '---');
+    _setText('lcu-port', '---');
+    _setText('lcu-port-settings', '---');
+    _setStyle('level-bar', 'width', '0%');
     setStatusOffline();
     return;
   }
 
-  typewrite('summoner-name', data.name, 'text-sm text-cyan-300 glow-cyan tracking-wide');
-  document.getElementById('lcu-port').textContent  = data.port;
-  document.getElementById('summoner-level').textContent = data.level;
+  typewrite('summoner-name', data.name, 'text-lg text-cyan-300 glow-cyan tracking-wide');
+  _setText('lcu-port', data.port);
+  _setText('lcu-port-settings', data.port);
+  _setText('summoner-level', data.level);
 
   requestAnimationFrame(() => {
     setTimeout(() => {
@@ -70,37 +97,38 @@ function updateUI(data) {
 
   setStatusOnline();
 
-  // 非同步載入大頭貼（不阻塞後續流程）
-  if (data.iconId) {
-    eel.get_lcu_image_base64(`/lol-game-data/assets/v1/profile-icons/${data.iconId}.jpg`)()
+  const iconId = parseInt(data.iconId, 10);
+  if (iconId > 0) {
+    const avatarPath = '/lol-game-data/assets/v1/profile-icons/' + iconId + '.jpg';
+    eel.get_lcu_image_base64(avatarPath)()
       .then(src => {
         if (src) document.getElementById('avatar-img').src = src;
+        else append_log('AVATAR_WARN >> proxy empty for iconId=' + iconId);
       });
   }
 
-  // 載入牌位與作戰紀錄
   loadRankInfo();
   loadMatchHistory();
 }
 
 function setStatusOnline() {
   const st = document.getElementById('status-text');
-  st.textContent = '連線中';
-  st.className   = 'glow-green transition-all duration-500';
-  document.getElementById('status-dot').className = 'w-1.5 h-1.5 ml-auto shrink-0 status-online';
+  st.textContent = '連線正常';
+  st.className   = 'text-[10px] glow-green transition-all duration-500';
+  document.getElementById('status-dot').className = 'w-2 h-2 shrink-0 status-online';
   const lbl = document.getElementById('status-label');
-  lbl.textContent = '連線正常';
-  lbl.className   = 'text-[9px] text-green-500';
+  lbl.textContent = '已連線';
+  lbl.className   = 'text-[10px] text-green-500';
 }
 
 function setStatusOffline() {
   const st = document.getElementById('status-text');
-  st.textContent = '離線';
-  st.className   = 'text-red-800 transition-all duration-500';
-  document.getElementById('status-dot').className = 'w-1.5 h-1.5 ml-auto shrink-0 bg-red-900';
+  st.textContent = '未連線';
+  st.className   = 'text-[10px] text-red-800 transition-all duration-500';
+  document.getElementById('status-dot').className = 'w-2 h-2 shrink-0 bg-red-900';
   const lbl = document.getElementById('status-label');
-  lbl.textContent = '未連線';
-  lbl.className   = 'text-[9px] text-red-900';
+  lbl.textContent = '離線';
+  lbl.className   = 'text-[10px] text-red-900';
 }
 
 // ── 打字機效果 ──────────────────────────────────────────────────────────
@@ -119,9 +147,17 @@ function typewrite(id, text, className) {
 async function loadRankInfo() {
   const info = await eel.get_rank_info()();
   if (!info) return;
-  document.getElementById('rank-text').textContent = info.text || '未定級';
-  if (info.emblemB64) {
-    document.getElementById('rank-img').src = info.emblemB64;
+  _renderRank('solo', info.solo);
+  _renderRank('flex', info.flex);
+}
+
+function _renderRank(type, rank) {
+  if (!rank) return;
+  _setText('rank-' + type + '-text', rank.text || '未定級');
+  _setText('rank-' + type + '-lp',   rank.tier !== 'UNRANKED' ? (rank.lp || '') : '');
+  if (rank.tier && rank.tier !== 'UNRANKED') {
+    document.getElementById('rank-' + type + '-img').src =
+      'https://opgg-static.akamaized.net/images/medals_new/' + rank.tier.toLowerCase() + '.png';
   }
 }
 
@@ -134,9 +170,15 @@ async function loadMatchHistory() {
     '<span class="placeholder-block">██████████████████████</span>' +
     '<span class="blink text-cyan-800 ml-1">▮</span></div>';
 
-  const matches = await eel.get_match_history()();
+  _updatePaginationUI(true);
 
+  const begIndex = (currentPage - 1) * itemsPerPage;
+  const endIndex = currentPage * itemsPerPage;
+  const matches  = await eel.get_match_history(begIndex, endIndex)();
   list.innerHTML = '';
+
+  _lastMatchCount = matches ? matches.length : 0;
+  _updatePaginationUI(false);
 
   if (!matches || matches.length === 0) {
     list.innerHTML =
@@ -148,14 +190,20 @@ async function loadMatchHistory() {
   for (const m of matches) {
     const card = _buildMatchCard(m);
     list.appendChild(card);
-
-    // 非同步載入英雄圖示與裝備圖示（不阻塞渲染）
     _loadChampIcon(m.championId, card.querySelector('.champ-img'));
     _loadItemIcons(m.items || [], card.querySelectorAll('.item-icon'));
   }
 }
 
-// 嘗試多條路徑直到取得英雄圖示
+function _updatePaginationUI(loading) {
+  const pageEl = document.getElementById('current-page');
+  const prevBtn = document.getElementById('prev-page');
+  const nextBtn = document.getElementById('next-page');
+  if (pageEl) pageEl.textContent = currentPage;
+  if (prevBtn) prevBtn.disabled = loading || currentPage <= 1;
+  if (nextBtn) nextBtn.disabled = loading || _lastMatchCount < itemsPerPage;
+}
+
 async function _loadChampIcon(champId, imgEl) {
   const paths = [
     `/lol-game-data/assets/v1/champion-icons/${champId}.png`,
@@ -167,7 +215,6 @@ async function _loadChampIcon(champId, imgEl) {
   }
 }
 
-// 逐一載入裝備圖示（使用 Python 端 items.json 字典查路徑）
 async function _loadItemIcons(items, iconEls) {
   for (let i = 0; i < iconEls.length; i++) {
     const id = items[i] || 0;
@@ -180,19 +227,24 @@ async function _loadItemIcons(items, iconEls) {
   }
 }
 
+const queueMap = {
+  420: '單雙積分', 440: '彈性積分', 450: '隨機單中',
+  430: '盲選模式', 400: '一般對戰', 490: '快速對戰', 1700: '競技場',
+};
+
 function _buildMatchCard(m) {
   const card = document.createElement('div');
   card.className = `match-card ${m.win ? 'win' : 'loss'}`;
 
-  const kda  = m.deaths === 0
+  const kda       = m.deaths === 0
     ? '<span style="color:#fbbf24">完美</span>'
     : ((m.kills + m.assists) / m.deaths).toFixed(2);
-  const mins = Math.floor(m.duration / 60);
-  const secs = String(m.duration % 60).padStart(2, '0');
+  const mins      = Math.floor(m.duration / 60);
+  const secs      = String(m.duration % 60).padStart(2, '0');
+  const queueName = queueMap[m.queueId] || m.queue || '一般對戰';
 
   const PLACEHOLDER = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E";
 
-  // Build 6 item icon placeholders
   const itemsHtml = (m.items || [0,0,0,0,0,0]).slice(0, 6).map(() =>
     `<img src="${PLACEHOLDER}" class="item-icon empty" alt="">`
   ).join('');
@@ -201,7 +253,7 @@ function _buildMatchCard(m) {
     <img src="${PLACEHOLDER}" class="champ-img" alt="${m.championName}" title="${m.championName}">
     <div class="card-content">
       <div class="card-row">
-        <span class="champ-name" style="width:76px;flex-shrink:0">${m.championName}</span>
+        <span class="champ-name" style="width:90px;flex-shrink:0">${m.championName}</span>
         <div class="kda-block">
           <span class="k">${m.kills}</span><span class="sep">/</span>
           <span class="d">${m.deaths}</span><span class="sep">/</span>
@@ -212,7 +264,7 @@ function _buildMatchCard(m) {
         <div class="result ${m.win ? 'win-badge' : 'loss-badge'}">${m.win ? '[ 勝利 ]' : '[ 失敗 ]'}</div>
       </div>
       <div class="card-row">
-        <span class="game-mode" style="width:76px;flex-shrink:0">${m.queue}</span>
+        <span class="game-mode" style="width:90px;flex-shrink:0">${queueName}</span>
         <div class="items-row">${itemsHtml}</div>
         <div class="flex-1"></div>
         <span class="duration">${mins}:${secs}</span>
@@ -234,16 +286,15 @@ function toggleAutoAccept() {
   if (autoAcceptEnabled) {
     btn.classList.add('engaged');
     lbl.innerHTML = '<span class="glow-orange">[ 自動接受對局：已啟動 ]</span>';
-    ind.className = 'w-3 h-3 bg-orange-500 border-2 border-orange-400 transition-all duration-300 shadow-[0_0_8px_rgba(251,146,60,0.8)]';
+    ind.className = 'w-3 h-3 bg-orange-500 border-2 border-orange-400 transition-all duration-300 shadow-[0_0_8px_rgba(251,146,60,0.8)] shrink-0';
     desc.innerHTML = '<span style="color:rgba(251,146,60,0.55)">協議已啟動，偵測到配對時自動接受。</span>';
   } else {
     btn.classList.remove('engaged');
-    lbl.textContent = '[ 自動接受對局：待機中 ]';
+    lbl.textContent = '[ 自動接受對局 ]';
     lbl.style       = '';
-    ind.className   = 'w-3 h-3 border-2 border-slate-700 bg-transparent transition-all duration-300';
+    ind.className   = 'w-3 h-3 border-2 border-slate-700 bg-transparent transition-all duration-300 shrink-0';
     desc.innerHTML  =
-      '點擊以啟動自動配對接受協議，偵測到 ' +
-      '<span style="color:#475569">InProgress</span> 狀態時觸發。';
+      '偵測到 <span style="color:#475569">InProgress</span> 配對狀態時自動接受。';
   }
 
   eel.set_auto_accept(autoAcceptEnabled);
@@ -254,14 +305,15 @@ async function doReconnect() {
   document.getElementById('summoner-name').innerHTML =
     '<span class="placeholder-block">████████████</span><span class="blink text-cyan-700">▮</span>';
   document.getElementById('summoner-level').textContent = '---';
-  document.getElementById('lcu-port').textContent       = '---';
-  document.getElementById('level-bar').style.width      = '0%';
+  document.getElementById('lcu-port').textContent        = '---';
+  document.getElementById('lcu-port-settings').textContent = '---';
+  document.getElementById('level-bar').style.width       = '0%';
   document.getElementById('avatar-img').src =
     "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E";
 
   const st = document.getElementById('status-text');
   st.textContent = '重新連線中...';
-  st.className   = 'text-yellow-600 transition-all duration-500';
+  st.className   = 'text-[10px] text-yellow-600 transition-all duration-500';
 
   const data = await eel.reconnect()();
   updateUI(data);
@@ -269,7 +321,26 @@ async function doReconnect() {
 
 // ── 初始化 ─────────────────────────────────────────────────────────────
 window.addEventListener('load', async () => {
-  append_log('SYS >> 終端介面初始化完成');
-  const data = await eel.initialize()();
-  updateUI(data);
+  append_log('SYS >> 終端介面 V4 初始化完成');
+
+  document.getElementById('items-per-page').addEventListener('change', function () {
+    itemsPerPage = parseInt(this.value, 10);
+    currentPage  = 1;
+    loadMatchHistory();
+  });
+
+  document.getElementById('prev-page').addEventListener('click', () => {
+    if (currentPage > 1) { currentPage--; loadMatchHistory(); }
+  });
+
+  document.getElementById('next-page').addEventListener('click', () => {
+    if (_lastMatchCount >= itemsPerPage) { currentPage++; loadMatchHistory(); }
+  });
+
+  try {
+    const data = await eel.initialize()();
+    updateUI(data);
+  } catch (err) {
+    append_log(`JS_ERR >> ${err}`, true);
+  }
 });

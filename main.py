@@ -42,7 +42,7 @@ def _load_champ_summary():
     if _champ_summary_loaded:
         return
     try:
-        data = _client.get("/lol-game-data/v1/champion-summary")
+        data = _client.get("/lol-game-data/v1/champion-summary", timeout=10)
         count = 0
         for c in data:
             cid  = int(c.get("id", -1))
@@ -82,7 +82,7 @@ def _load_item_cache():
     if _item_cache_loaded:
         return
     try:
-        data = _client.get("/lol-game-data/assets/v1/items.json")
+        data = _client.get("/lol-game-data/assets/v1/items.json", timeout=15)
         for item in data:
             iid  = int(item.get("id", 0))
             path = (item.get("iconPath") or "").strip()
@@ -139,7 +139,6 @@ def initialize():
 
         _log(f"OPERATOR_PROFILE >> loaded: {full} // LVL {lvl} // ICON {icon_id}")
         _load_champ_summary()
-        _load_item_cache()
         _start_ws()
         return {
             "ok":     True,
@@ -191,79 +190,44 @@ def get_item_image_base64_by_id(item_id: int) -> str:
 
 @eel.expose
 def get_rank_info() -> dict | None:
-    """Return rank text and pre-fetched emblem base64."""
+    """Return solo and flex rank data separately."""
     if not _client or not _puuid:
         return None
 
-    _TIER_ORDER = {
-        'CHALLENGER': 9, 'GRANDMASTER': 8, 'MASTER': 7,
-        'DIAMOND': 6, 'EMERALD': 5, 'PLATINUM': 4,
-        'GOLD': 3, 'SILVER': 2, 'BRONZE': 1, 'IRON': 0,
-    }
     _TIER_ZH = {
         'IRON': '黑鐵', 'BRONZE': '青銅', 'SILVER': '白銀',
         'GOLD': '黃金', 'PLATINUM': '白金', 'EMERALD': '翡翠',
         'DIAMOND': '鑽石', 'MASTER': '大師',
         'GRANDMASTER': '宗師', 'CHALLENGER': '菁英',
     }
-    _QUEUE_PRIO = {'RANKED_SOLO_5x5': 2, 'RANKED_FLEX_SR': 1}
-    _NO_RANK    = {'NONE', 'UNRANKED', 'NA', ''}
-    _DIV_MAP    = {'I': 'Ⅰ', 'II': 'Ⅱ', 'III': 'Ⅲ', 'IV': 'Ⅳ'}
+    _NO_RANK = {'NONE', 'UNRANKED', 'NA', ''}
+    _DIV_MAP = {'I': 'Ⅰ', 'II': 'Ⅱ', 'III': 'Ⅲ', 'IV': 'Ⅳ'}
 
-    try:
-        data = _client.get(f"/lol-ranked/v1/ranked-stats/{_puuid}")
-        _log(f"RANK_DEBUG >> keys={list(data.keys())}")
-
-        # Handle queues as list or queueMap as dict
-        queues = data.get("queues") or []
-        if not queues:
-            q_map = data.get("queueMap") or {}
-            queues = list(q_map.values())
-
-        _log(f"RANK_DEBUG >> {len(queues)} queue entries")
-
-        best = None
-        for entry in queues:
-            tier = (entry.get('tier') or '').upper()
-            if tier in _NO_RANK:
-                continue
-            if best is None:
-                best = entry
-                continue
-            my_t = _TIER_ORDER.get(tier, -1)
-            ok_t = _TIER_ORDER.get((best.get('tier') or '').upper(), -1)
-            my_q = _QUEUE_PRIO.get(entry.get('queueType', ''), 0)
-            ok_q = _QUEUE_PRIO.get(best.get('queueType', ''), 0)
-            if my_t > ok_t or (my_t == ok_t and my_q > ok_q):
-                best = entry
-
-        if not best:
-            _log("RANK_INFO >> 未定級")
-            return {"tier": "UNRANKED", "text": "未定級", "emblemB64": ""}
-
-        tier     = (best.get('tier') or 'NONE').upper()
-        division = (best.get('division') or best.get('rank') or '')
-        lp       = best.get('leaguePoints', 0)
+    def _parse(entry):
+        if not entry:
+            return {"tier": "UNRANKED", "text": "未定級", "lp": ""}
+        tier = (entry.get('tier') or '').upper()
+        if tier in _NO_RANK:
+            return {"tier": "UNRANKED", "text": "未定級", "lp": ""}
+        division = (entry.get('division') or entry.get('rank') or '')
+        lp       = entry.get('leaguePoints', 0)
         tier_zh  = _TIER_ZH.get(tier, tier)
-
         if tier in ('MASTER', 'GRANDMASTER', 'CHALLENGER'):
-            text = f"{tier_zh}  {lp} LP"
+            text = tier_zh
         else:
             text = f"{tier_zh} {_DIV_MAP.get(division, division)}"
+        return {"tier": tier, "text": text, "lp": f"{lp} LP"}
 
-        # Emblem: load path from ranked-emblems.json, fall back to known path pattern
-        _load_rank_emblem_cache()
-        emblem_path = _rank_emblem_cache.get(tier, "")
-        if not emblem_path:
-            emblem_path = (
-                f"/lol-game-data/assets/ASSETS/Ranked/RankedEmblem/"
-                f"RankedEmblem_{tier.title()}.png"
-            )
-            _log(f"EMBLEM_FALLBACK >> using guessed path for {tier}")
+    try:
+        data   = _client.get(f"/lol-ranked/v1/ranked-stats/{_puuid}")
+        queues = data.get("queues") or list((data.get("queueMap") or {}).values())
 
-        emblem_b64 = get_lcu_image_base64(emblem_path)
-        _log(f"RANK_INFO >> {text} | emblem={'ok' if emblem_b64 else 'EMPTY'} | path={emblem_path}")
-        return {"tier": tier, "text": text, "emblemB64": emblem_b64}
+        solo = next((e for e in queues if e.get('queueType') == 'RANKED_SOLO_5x5'), None)
+        flex = next((e for e in queues if e.get('queueType') == 'RANKED_FLEX_SR'),  None)
+
+        result = {"solo": _parse(solo), "flex": _parse(flex)}
+        _log(f"RANK_INFO >> solo={result['solo']['text']} flex={result['flex']['text']}")
+        return result
 
     except Exception as e:
         _log(f"RANK_INFO_ERR >> {e}")
@@ -271,14 +235,14 @@ def get_rank_info() -> dict | None:
 
 
 @eel.expose
-def get_match_history() -> list:
-    """Return the last 5 matches for the current summoner, parsed into simple dicts."""
+def get_match_history(beg_index: int = 0, end_index: int = 20) -> list:
+    """Return matches for the current summoner using dynamic pagination indices."""
     if not _client:
         return []
     try:
         raw   = _client.get(
-            "/lol-match-history/v1/products/lol/current-summoner/matches"
-            "?begIndex=0&endIndex=4"
+            f"/lol-match-history/v1/products/lol/current-summoner/matches"
+            f"?begIndex={beg_index}&endIndex={end_index}"
         )
         games = raw.get("games", {}).get("games", [])
 
@@ -291,8 +255,9 @@ def get_match_history() -> list:
             700: "衝突",
         }
 
+        count   = end_index - beg_index
         results = []
-        for game in games[:5]:
+        for game in games[:count]:
             # Find current player's participantId
             our_pid = None
             for ident in game.get("participantIdentities", []):
@@ -321,6 +286,7 @@ def get_match_history() -> list:
                     "assists":      stats.get("assists", 0),
                     "win":          stats.get("win",  False),
                     "duration":     game.get("gameDuration", 0),
+                    "queueId":      q,
                     "queue":        _QUEUES.get(q, "對戰"),
                     "items":        [stats.get(f"item{i}", 0) for i in range(6)],
                 })
@@ -433,7 +399,7 @@ if __name__ == "__main__":
     web_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
     eel.init(web_dir)
 
-    launch_opts = dict(size=(1000, 600), close_callback=lambda p, s: sys.exit(0))
+    launch_opts = dict(size=(1280, 800), close_callback=lambda p, s: sys.exit(0))
     for mode in ("edge", "chrome", "default"):
         try:
             eel.start("index.html", mode=mode, **launch_opts)
