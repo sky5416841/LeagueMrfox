@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <title>LCU 終端介面</title>
+  <script src="/eel.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="bg-[#020617] h-screen overflow-hidden select-none">
+
+<div id="accept-flash"></div>
+
+<div class="scanlines h-full flex flex-col p-3 gap-2">
+
+  <!-- ── 頂部控制列 ── -->
+  <header class="shrink-0 border border-cyan-500/40 px-4 py-2 flex items-center justify-between
+                 shadow-[0_0_20px_rgba(6,182,212,0.15)] bg-[#020617]">
+    <div class="flex items-center gap-3">
+      <span class="text-cyan-400 text-sm">▶</span>
+      <span class="text-sm tracking-widest text-cyan-300 glow-cyan">
+        [ LCU_終端介面 v1.0 // 狀態：<span id="status-text" class="text-slate-500 transition-all duration-500">連線中...</span> ]
+      </span>
+    </div>
+    <div class="flex items-center gap-3">
+      <button onclick="doReconnect()"
+        class="text-xs border border-slate-700 text-slate-500 px-3 py-1
+               hover:border-cyan-500/60 hover:text-cyan-400 transition-all duration-200 active:scale-95">
+        [ 重新連線 ]
+      </button>
+      <span id="clock" class="text-xs text-slate-600 w-16 text-right tabular-nums"></span>
+    </div>
+  </header>
+
+  <!-- ── 上方雙欄面板 (固定高度) ── -->
+  <div class="flex gap-2 shrink-0 h-[188px]">
+
+    <!-- 左側：操作員檔案 -->
+    <section class="w-[40%] border border-cyan-500/30 flex flex-col
+                    shadow-[0_0_15px_rgba(6,182,212,0.08)] bg-[#020617]">
+      <div class="border-b border-cyan-500/25 px-4 py-1.5 shrink-0">
+        <span class="text-[10px] tracking-[0.2em] text-cyan-600">// 操作員檔案</span>
+      </div>
+      <div class="flex-1 px-4 py-3 flex gap-4 overflow-hidden">
+
+        <!-- 頭像欄 -->
+        <div class="flex flex-col gap-1.5 shrink-0">
+          <img id="avatar-img"
+               src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E"
+               class="img-placeholder w-14 h-14 border border-cyan-500/50"
+               alt="玩家頭像" title="玩家頭像">
+          <div class="flex flex-col items-center" style="gap:2px;">
+            <img id="rank-img"
+                 src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E"
+                 class="img-placeholder w-14 h-14 border border-cyan-500/30"
+                 alt="牌位圖示" title="牌位圖示">
+            <span id="rank-text"
+                  class="text-[8px] text-slate-700 tracking-wider leading-none text-center"
+                  style="max-width:56px;">未定級</span>
+          </div>
+        </div>
+
+        <!-- 資訊欄 -->
+        <div class="flex flex-col justify-between flex-1 min-w-0 py-0.5">
+          <div>
+            <div class="text-[9px] tracking-widest text-slate-700 mb-1">操作員代號</div>
+            <div id="summoner-name" class="text-sm text-cyan-300 glow-cyan tracking-wide truncate">
+              <span class="placeholder-block">████████████</span><span class="blink text-cyan-700">▮</span>
+            </div>
+          </div>
+
+          <div>
+            <div class="flex justify-between mb-1">
+              <span class="text-[9px] tracking-widest text-slate-700">操作員等級</span>
+              <span id="summoner-level" class="text-[10px] text-cyan-400 tabular-nums">---</span>
+            </div>
+            <div class="h-1 bg-slate-900 border border-cyan-500/15 overflow-hidden">
+              <div id="level-bar"
+                   class="h-full bg-gradient-to-r from-cyan-600 to-cyan-400 transition-all duration-1000 ease-out
+                          shadow-[0_0_6px_rgba(6,182,212,0.6)]"
+                   style="width:0%"></div>
+            </div>
+          </div>
+
+          <div class="flex items-center gap-2">
+            <span class="text-[9px] tracking-widest text-slate-700">LCU 埠號</span>
+            <span id="lcu-port" class="text-[10px] text-slate-500 ml-1">---</span>
+            <div id="status-dot" class="w-1.5 h-1.5 bg-slate-700 ml-auto shrink-0"></div>
+            <span id="status-label" class="text-[9px] text-slate-700">未連線</span>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- 右側：系統控制模組 -->
+    <section class="flex-1 border border-cyan-500/30 flex flex-col
+                    shadow-[0_0_15px_rgba(6,182,212,0.08)] bg-[#020617]">
+      <div class="border-b border-cyan-500/25 px-4 py-1.5 shrink-0">
+        <span class="text-[10px] tracking-[0.2em] text-cyan-600">// 系統控制模組</span>
+      </div>
+      <div class="flex-1 px-5 py-3 flex flex-col justify-between overflow-hidden">
+
+        <div>
+          <div class="text-[9px] tracking-widest text-slate-700 mb-2">配對模組</div>
+          <button id="auto-accept-btn" onclick="toggleAutoAccept()"
+            class="auto-btn w-full border-2 border-slate-700 px-4 py-3 text-left
+                   hover:border-slate-600 transition-all duration-300 active:scale-[0.99]">
+            <div class="flex items-center justify-between mb-1.5">
+              <span id="aa-label" class="text-sm tracking-widest text-slate-500">
+                [ 自動接受對局：待機中 ]
+              </span>
+              <div id="aa-indicator"
+                   class="w-3 h-3 border-2 border-slate-700 bg-transparent transition-all duration-300">
+              </div>
+            </div>
+            <div id="aa-desc" class="text-[10px] text-slate-700 leading-relaxed">
+              點擊以啟動自動配對接受協議，偵測到
+              <span class="text-slate-600">InProgress</span> 狀態時觸發。
+            </div>
+          </button>
+        </div>
+
+        <div class="text-[10px] text-slate-700 space-y-0.5">
+          <div class="flex gap-2">
+            <span class="text-slate-600 w-14">通訊協定</span><span>HTTPS + WSS (自簽憑證)</span>
+          </div>
+          <div class="flex gap-2">
+            <span class="text-slate-600 w-14">身份驗證</span><span>BASIC (riot / lockfile)</span>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+  </div>
+
+  <!-- ── 作戰紀錄 (主區塊) ── -->
+  <section class="flex-1 min-h-0 border border-cyan-500/30 flex flex-col
+                  shadow-[0_0_15px_rgba(6,182,212,0.08)] bg-[#020617]">
+
+    <!-- 區塊標頭 + 欄位名稱 -->
+    <div class="border-b border-cyan-500/25 px-4 py-1.5 shrink-0 flex items-center justify-between">
+      <span class="text-[10px] tracking-[0.2em] text-cyan-600">// 作戰紀錄</span>
+      <span class="text-[9px] text-slate-700 italic">最近對局 ── 佔位資料</span>
+    </div>
+
+    <!-- 欄標題列 -->
+    <div class="match-header shrink-0">
+      <div class="w-9 shrink-0"></div>
+      <div class="flex-1">英雄 &nbsp;/&nbsp; K / D / A &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 出裝</div>
+      <div class="w-[60px] text-right shrink-0">結果</div>
+    </div>
+
+    <!-- 對局卡片列表 (由 JS 動態填入) -->
+    <div id="match-list" class="flex-1 overflow-y-auto custom-scroll">
+      <div class="py-6 text-center text-[10px] text-slate-700 tracking-widest">
+        <span class="placeholder-block">██████████████████████</span>
+        <span class="blink text-cyan-800 ml-1">▮</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── 作戰日誌 (縮小版) ── -->
+  <footer class="shrink-0 h-[66px] border border-cyan-500/30 flex flex-col
+                 shadow-[0_0_10px_rgba(6,182,212,0.06)] bg-[#020617]">
+    <div class="border-b border-cyan-500/25 px-4 py-1 shrink-0 flex items-center justify-between">
+      <span class="text-[10px] tracking-[0.2em] text-cyan-600">// 作戰日誌</span>
+      <button onclick="clearLog()"
+        class="text-[9px] text-slate-700 hover:text-slate-500 transition-colors">[ 清除 ]</button>
+    </div>
+    <div id="log" class="flex-1 overflow-y-auto px-4 py-1 custom-scroll">
+      <div class="log-line">
+        <span class="log-ts">[--:--:--]</span>
+        <span class="log-arrow">▶</span>
+        <span class="log-msg">終端介面已載入，等待連線...</span>
+      </div>
+    </div>
+  </footer>
+
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

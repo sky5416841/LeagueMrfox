@@ -1,0 +1,202 @@
+/* ── Base ─────────────────────────────────────────────────────────── */
+* { box-sizing: border-box; }
+
+body, input, button, textarea {
+  font-family: 'Share Tech Mono', 'Consolas', 'Courier New', monospace;
+}
+
+/* ── Scanlines ────────────────────────────────────────────────────── */
+.scanlines::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent 0px, transparent 3px,
+    rgba(0,0,0,0.07) 3px, rgba(0,0,0,0.07) 4px
+  );
+  pointer-events: none;
+  z-index: 9999;
+}
+
+/* ── Glow ─────────────────────────────────────────────────────────── */
+.glow-cyan   { text-shadow: 0 0 8px rgba(6,182,212,0.7), 0 0 18px rgba(6,182,212,0.3); }
+.glow-green  { color:#4ade80 !important; text-shadow: 0 0 8px rgba(74,222,128,0.8), 0 0 20px rgba(74,222,128,0.4); }
+.glow-orange { color:#fb923c !important; text-shadow: 0 0 8px rgba(251,146,60,0.8),  0 0 20px rgba(251,146,60,0.4); }
+
+/* ── Animations ───────────────────────────────────────────────────── */
+@keyframes blink            { 0%,100%{opacity:1} 50%{opacity:0} }
+@keyframes placeholder-pulse{ 0%,100%{opacity:.15} 50%{opacity:.35} }
+@keyframes status-pulse     { 0%,100%{opacity:1;box-shadow:0 0 4px rgba(74,222,128,.5)} 50%{opacity:.6;box-shadow:0 0 12px rgba(74,222,128,.9)} }
+@keyframes orange-pulse     { 0%,100%{box-shadow:0 0 6px rgba(251,146,60,.3),inset 0 0 6px rgba(251,146,60,.04)} 50%{box-shadow:0 0 22px rgba(251,146,60,.6),inset 0 0 12px rgba(251,146,60,.08)} }
+@keyframes accept-flash     { 0%{opacity:0} 20%{opacity:1} 100%{opacity:0} }
+
+.blink            { animation: blink 1s step-end infinite; }
+.placeholder-block{ color:#334155; animation: placeholder-pulse 1.4s ease-in-out infinite; }
+.status-online    { background-color:#4ade80 !important; animation: status-pulse 2s ease-in-out infinite; }
+
+/* ── Image placeholders ───────────────────────────────────────────── */
+.img-placeholder {
+  display: block;
+  background: #0a1628;
+  object-fit: cover;
+  position: relative;
+  flex-shrink: 0;
+}
+
+/* Label overlay on placeholder images */
+.img-label {
+  position: absolute;
+  bottom: 2px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 8px;
+  color: #1e3a52;
+  pointer-events: none;
+  letter-spacing: .1em;
+}
+
+/* Champion images in match cards */
+.champ-img {
+  display: block;
+  width: 36px;
+  height: 36px;
+  background: #0a1628;
+  border: 1px solid rgba(6,182,212,0.3);
+  flex-shrink: 0;
+  object-fit: cover;
+}
+
+/* ── Auto-Accept button ───────────────────────────────────────────── */
+.auto-btn { background: transparent; cursor: pointer; }
+.auto-btn:hover { background: rgba(6,182,212,0.03); }
+.auto-btn.engaged {
+  border-color: #fb923c !important;
+  background: rgba(251,146,60,0.05);
+  animation: orange-pulse 2s ease-in-out infinite;
+}
+
+/* ── Accept flash overlay ─────────────────────────────────────────── */
+#accept-flash {
+  pointer-events: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(251,146,60,0.08);
+  border: 2px solid rgba(251,146,60,0.4);
+  display: none;
+  z-index: 9998;
+}
+#accept-flash.flashing {
+  display: block;
+  animation: accept-flash 0.6s ease-out forwards;
+}
+
+/* ── Match list header row ────────────────────────────────────────── */
+.match-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 16px;
+  font-size: 9px;
+  color: #334155;
+  letter-spacing: .1em;
+  background: rgba(15,23,42,0.6);
+  border-bottom: 1px solid #0f172a;
+}
+
+/* ── Match cards ──────────────────────────────────────────────────── */
+.match-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 7px 16px;
+  border-bottom: 1px solid #080f1a;
+  border-left: 2px solid transparent;
+  transition: background .12s;
+}
+.match-card:hover  { background: rgba(6,182,212,0.025); }
+.match-card.win    { border-left-color: rgba(74,222,128,0.35); }
+.match-card.loss   { border-left-color: rgba(239,68,68,0.35); }
+
+/* Champion image — slight top offset so it aligns with first row text */
+.champ-img { margin-top: 2px; }
+
+/* Two-row card body */
+.card-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+.card-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Champion name + game mode */
+.champ-name { font-size:12px; color:#94a3b8; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.game-mode  { font-size:10px; color:#1e293b; }
+
+/* KDA block */
+.kda-block {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+}
+.kda-block .k, .kda-block .a { font-size:12px; color:#cbd5e1; width:22px; text-align:right; }
+.kda-block .d                 { font-size:12px; color:#f87171; width:22px; text-align:right; }
+.kda-block .sep               { font-size:12px; color:#1e293b; padding:0 3px; }
+.kda-block .ratio             { font-size:10px; color:#334155; margin-left:8px; }
+
+/* Item icons row */
+.items-row {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+.item-icon {
+  display: block;
+  width: 22px;
+  height: 22px;
+  border: 1px solid rgba(6,182,212,0.2);
+  background: #070f1a;
+  flex-shrink: 0;
+  object-fit: cover;
+}
+.item-icon.empty { opacity: 0.12; }
+
+/* Duration */
+.duration {
+  font-size: 10px;
+  color: #334155;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* Result badges */
+.result {
+  font-size: 10px;
+  padding: 2px 4px;
+  width: 60px;
+  text-align: center;
+  flex-shrink: 0;
+  letter-spacing: .05em;
+}
+.win-badge  { color:#4ade80; border:1px solid rgba(74,222,128,0.4); text-shadow:0 0 6px rgba(74,222,128,0.5); }
+.loss-badge { color:#f87171; border:1px solid rgba(248,113,113,0.4); text-shadow:0 0 6px rgba(248,113,113,0.3); }
+
+/* ── Log lines ────────────────────────────────────────────────────── */
+.log-line { display:flex; gap:6px; font-size:10px; line-height:1.5; }
+.log-ts    { color:#1e293b; white-space:nowrap; }
+.log-arrow { color:#334155; }
+.log-msg   { color:#475569; }
+.log-msg.highlight { color:#fb923c; text-shadow:0 0 6px rgba(251,146,60,0.5); }
+
+/* ── Scrollbar ────────────────────────────────────────────────────── */
+.custom-scroll::-webkit-scrollbar       { width:3px; }
+.custom-scroll::-webkit-scrollbar-track { background:transparent; }
+.custom-scroll::-webkit-scrollbar-thumb { background:rgba(6,182,212,0.2); }
+.custom-scroll::-webkit-scrollbar-thumb:hover { background:rgba(6,182,212,0.4); }
