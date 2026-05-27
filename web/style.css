@@ -872,3 +872,46 @@ body, input, button, textarea {
   border-radius: 2px;
   transition: width .5s ease;
 }
+
+.live-champ-icon {
+  width: 30px;
+  height: 30px;
+  border: 1px solid rgba(6,182,212,0.15);
+  border-radius: 2px;
+  overflow: hidden;
+  flex-shrink: 0;
+  background: #0a1628;
+}
+
+/* ── InGame 10-player dual-panel ─────────────────────────────────── */
+.ingame-panel {
+  display: flex;
+  gap: 8px;
+  height: 100%;
+  min-height: 0;
+}
+.ingame-team-col {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  overflow-y: auto;
+}
+.ingame-divider {
+  width: 1px;
+  background: rgba(6,182,212,0.08);
+  flex-shrink: 0;
+  align-self: stretch;
+}
+.ingame-team-hdr {
+  font-size: 9px;
+  letter-spacing: .15em;
+  color: #475569;
+  padding-bottom: 4px;
+  border-bottom: 1px solid rgba(6,182,212,0.06);
+  margin-bottom: 2px;
+  flex-shrink: 0;
+}
+.ingame-team-hdr-blue { color: #67e8f9; }
+.ingame-team-hdr-red  { color: #fca5a5; }

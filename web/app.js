@@ -110,39 +110,77 @@ eel.expose(on_champ_select_ended);
 function on_champ_select_ended(phase) {
   const badge  = document.getElementById('live-phase-badge');
   const status = document.getElementById('live-status');
-  if (badge)  badge.textContent  = `[ ${phase === 'InGame' ? '遊戲進行中' : '對局結束'} ]`;
-  if (status) status.textContent = '已離開選角大廳，以下為本場隊友情報紀錄。';
-  append_log(`GAMEFLOW ▶▶ ${phase} — 即時戰情封存`, true);
+  if (phase === 'InProgress') {
+    if (badge)  badge.textContent  = '[ 遊戲進行中 · 10人雷達啟動中... ]';
+    if (status) status.textContent = '已進入遊戲，正在掃描全場 10 人戰力...';
+  } else {
+    if (badge)  badge.textContent  = '[ 對局結束 ]';
+    if (status) status.textContent = '對局已結束，以下為本場情報紀錄。';
+  }
+  append_log(`GAMEFLOW ▶▶ ${phase}`, true);
+}
+
+// ── 遊戲中 10 人雷達回調 ──────────────────────────────────────────────
+eel.expose(on_ingame_scan_ready);
+function on_ingame_scan_ready(data) {
+  append_log(`INGAME_SCAN ▶▶ 10 人雷達就緒 (友方 ${data.myTeam.length} + 敵方 ${data.enemyTeam.length})`, true);
+
+  const statusEl  = document.getElementById('live-status');
+  const playersEl = document.getElementById('live-players');
+  const badge     = document.getElementById('live-phase-badge');
+
+  if (statusEl) statusEl.textContent = `遊戲進行中 · 友方 ${data.myTeam.length} 人 vs 敵方 ${data.enemyTeam.length} 人`;
+  if (badge)    badge.textContent    = '[ 遊戲進行中 ]';
+
+  if (!playersEl) return;
+
+  playersEl.innerHTML = `
+    <div class="ingame-panel">
+      <div class="ingame-team-col">
+        <div class="ingame-team-hdr ingame-team-hdr-blue">// 友方</div>
+        ${data.myTeam.map(p => _renderLiveCard(p)).join('')}
+      </div>
+      <div class="ingame-divider"></div>
+      <div class="ingame-team-col">
+        <div class="ingame-team-hdr ingame-team-hdr-red">// 敵方</div>
+        ${data.enemyTeam.map(p => _renderLiveCard(p)).join('')}
+      </div>
+    </div>`;
+
+  // 非同步載入英雄頭像
+  playersEl.querySelectorAll('[data-champid]').forEach(img => {
+    _loadChampIcon(parseInt(img.dataset.champid), img);
+  });
+
+  switchTab('live');
 }
 
 function _renderLiveCard(p) {
-  const isAnon  = p.anonymous;
-  const isSelf  = p.isSelf;
-  const noData  = p.total === 0;
-  const wr      = p.winRate;
+  const isAnon   = p.anonymous;
+  const isSelf   = p.isSelf;
+  const noData   = p.total === 0;
+  const wr       = p.winRate || 0;
+  const hasChamp = p.championId && p.championId > 0;
 
-  // 標籤邏輯
+  // 標籤
   let badge = '';
   if (isSelf) {
     badge = '<span class="live-badge live-badge-self">[ 你 ]</span>';
   } else if (!isAnon && !noData) {
-    if (wr >= 60) {
-      badge = '<span class="live-badge live-badge-ace">[ ⭐ 絕活大腿 ]</span>';
-    } else if (wr < 40) {
-      badge = '<span class="live-badge live-badge-danger">[ 🚨 避雷警告 ]</span>';
-    }
+    if (wr >= 60) badge = '<span class="live-badge live-badge-ace">[ ⭐ 絕活大腿 ]</span>';
+    else if (wr < 40) badge = '<span class="live-badge live-badge-danger">[ 🚨 避雷警告 ]</span>';
   }
 
   // 勝率顏色
-  const wrColor = wr >= 60 ? '#4ade80'
-                : wr >= 50 ? '#a3e635'
-                : wr >= 40 ? '#fb923c'
-                : '#f87171';
+  const wrColor = wr >= 60 ? '#4ade80' : wr >= 50 ? '#a3e635' : wr >= 40 ? '#fb923c' : '#f87171';
 
-  // 名稱顯示
+  // 名稱 + 英雄名稱（遊戲中模式）
   const nameHtml = isAnon
     ? '<span class="text-slate-600 italic">匿名玩家</span>'
     : `<span class="text-slate-200 tracking-wide">${p.name}</span>`;
+  const champTag = hasChamp && p.championName
+    ? `<span class="text-[9px] text-slate-600 tracking-wider">[${p.championName}]</span>`
+    : '';
 
   // 戰績區
   const statsHtml = isAnon ? '<div class="text-[10px] text-slate-700">—</div>'
@@ -165,12 +203,20 @@ function _renderLiveCard(p) {
 
   const selfClass = isSelf ? ' live-card-self' : '';
 
+  // 左側圖示：有英雄時顯示頭像，選角大廳時顯示 cellId 數字
+  const iconHtml = hasChamp
+    ? `<div class="live-champ-icon">
+         <img class="w-full h-full object-cover" src="${IMG_PH}" ${IMG_ERR}
+              data-champid="${p.championId}" alt="${p.championName || ''}">
+       </div>`
+    : `<div class="live-cell-id">${p.cellId ?? ''}</div>`;
+
   return `
     <div class="live-card${selfClass}">
       <div class="flex items-center gap-3">
-        <div class="live-cell-id">${p.cellId}</div>
+        ${iconHtml}
         <div class="flex-1 min-w-0">
-          <div class="flex items-center gap-2 flex-wrap">${nameHtml}${badge}</div>
+          <div class="flex items-center gap-2 flex-wrap">${nameHtml}${champTag}${badge}</div>
           ${statsHtml}
         </div>
       </div>
