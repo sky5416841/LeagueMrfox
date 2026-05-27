@@ -587,6 +587,16 @@ function updateUI(data) {
 
   setStatusOnline();
 
+  const iconId = parseInt(data.iconId, 10);
+  if (iconId > 0) {
+    const avatarPath = '/lol-game-data/assets/v1/profile-icons/' + iconId + '.jpg';
+    eel.get_lcu_image_base64(avatarPath)()
+      .then(src => {
+        if (src) document.getElementById('avatar-img').src = src;
+        else append_log('AVATAR_WARN >> proxy empty for iconId=' + iconId);
+      });
+  }
+
   loadRankInfo();
   loadMatchHistory();
 }
@@ -1135,7 +1145,7 @@ async function doReconnect() {
   document.getElementById('lcu-port').textContent          = '---';
   document.getElementById('lcu-port-settings').textContent = '---';
   document.getElementById('level-bar').style.width         = '0%';
-  document.getElementById('avatar-img').src = 'avatar.png';
+  document.getElementById('avatar-img').src = IMG_PH;
 
   const st = document.getElementById('status-text');
   st.textContent = '重新連線中...';
