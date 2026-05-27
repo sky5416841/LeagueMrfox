@@ -367,6 +367,10 @@ def _scan_ingame_sync():
                 all_raw = list(cg_players)
                 source  = "coregame"
                 _log(f"INGAME_SCAN >> [coregame] 擊穿成功，{len(all_raw)} 位玩家就位")
+                # 診斷：記錄第一位玩家的所有 key 以確認欄位結構
+                if all_raw:
+                    sample_keys = list(all_raw[0].keys())
+                    _log(f"INGAME_SCAN >> coregame 玩家欄位樣本: {sample_keys}")
         except Exception as e:
             _log(f"INGAME_SCAN >> [coregame] 無回應: {e}")
 
@@ -423,6 +427,32 @@ def _scan_ingame_sync():
         enemy_raw = [p for p in all_raw if _tid(p) != my_tid and _tid(p) != 0]
         _log(f"INGAME_SCAN >> 我方 {len(my_raw)} + 敵方 {len(enemy_raw)}（來源: {source}）")
 
+        # ═══ 預抓 gameflow 名稱快取 ══════════════════════════════════════════
+        # InProgress 階段 gameflow teamOne/teamTwo 一定含真實玩家名稱，
+        # 用來補齊 coregame 中匿名玩家的空 summonerName。
+        _gf_name_cache: dict = {}
+        try:
+            gf_data = _client.get("/lol-gameflow/v1/session")
+            gd      = gf_data.get("gameData", {})
+            gf_all  = gd.get("teamOne", []) + gd.get("teamTwo", [])
+            _log(f"INGAME_SCAN >> gameflow teamOne+teamTwo 共 {len(gf_all)} 筆原始資料")
+            for gp in gf_all:
+                gp_puuid = (gp.get("puuid") or "").strip()
+                if not gp_puuid or gp_puuid == _EMPTY_PUUID:
+                    continue
+                # 診斷：記錄各欄位是否有值（不記錄實際名稱以保護隱私）
+                has = {k: bool((gp.get(k) or "").strip())
+                       for k in ("summonerName","gameName","displayName","riotId","name","internalName")}
+                real = (gp.get("summonerName") or gp.get("gameName") or
+                        gp.get("displayName")   or gp.get("riotId")  or
+                        gp.get("name") or "").strip()
+                _log(f"INGAME_SCAN >> GF玩家 puuid=...{gp_puuid[-6:]} 名稱欄位={has} found={bool(real)}")
+                if real:
+                    _gf_name_cache[gp_puuid] = real
+            _log(f"INGAME_SCAN >> gameflow 名稱快取 {len(_gf_name_cache)}/{len(gf_all)} 筆")
+        except Exception as e:
+            _log(f"INGAME_SCAN >> gameflow 名稱快取失敗: {e}")
+
         def _scan_one(p: dict) -> dict:
             puuid    = p.get("puuid", "") or ""
             if puuid == _EMPTY_PUUID:
@@ -437,9 +467,17 @@ def _scan_ingame_sync():
                 p.get("displayName")  or p.get("riotId")   or ""
             ).strip()
 
+            # 若 coregame 名稱為空，優先從 gameflow 快取補回真實名稱
+            if not name and puuid and puuid in _gf_name_cache:
+                name = _gf_name_cache[puuid]
+                _log(f"INGAME_SCAN >> GF快取補名 puuid=...{puuid[-6:]}")
+
             # 匿名玩家：有 PUUID 仍查戰績，名稱補英雄名作識別
             is_anon = not name
             if is_anon:
+                raw_fields = {k: bool((p.get(k) or "").strip())
+                              for k in ("summonerName","gameName","displayName","riotId","name")}
+                _log(f"INGAME_SCAN >> 匿名玩家 puuid=...{puuid[-6:] if puuid else 'N/A'} sid={sid} CG欄位={raw_fields}")
                 name = f"[匿名] {champ_nm}" if champ_nm else "[匿名]"
 
             entry = {
@@ -459,20 +497,26 @@ def _scan_ingame_sync():
                 "error": False,
             }
 
-            # 嘗試從 LCU v2 取真實名稱（即使匿名也試一次）
+            # 若仍匿名，最後嘗試 LCU summoner API（v1 by sid，v2 by puuid）
             if is_anon and (sid or puuid):
                 try:
                     ep = (f"/lol-summoner/v1/summoners/{sid}" if sid
                           else f"/lol-summoner/v2/summoners/puuid/{puuid}")
                     s = _client.get(ep)
+                    has2 = {k: bool((s.get(k) or "").strip())
+                            for k in ("displayName","gameName","name","internalName")}
+                    _log(f"INGAME_SCAN >> summonerAPI {ep[-30:]} 回傳欄位={has2}")
                     real = (s.get("displayName") or s.get("gameName") or
-                            s.get("name") or "").strip()
+                            s.get("name") or s.get("internalName") or "").strip()
                     if real:
                         entry["name"]      = real
                         entry["anonymous"] = False
                         is_anon = False
-                except Exception:
-                    pass
+                        _log(f"INGAME_SCAN >> summonerAPI 補名成功")
+                    else:
+                        _log(f"INGAME_SCAN >> summonerAPI 仍無名稱，所有欄位皆空")
+                except Exception as e:
+                    _log(f"INGAME_SCAN >> summonerAPI 失敗: {e}")
 
             # 戰績查詢：有 PUUID 就查，不論是否匿名
             if puuid:
