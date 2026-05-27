@@ -4,9 +4,11 @@
 
 ## 功能
 
-- **即時戰績查詢**：讀取最近最多 200 場對局，顯示英雄、KDA、傷害、裝備、符文
+- **即時戰績查詢（最多 200 場）**：透過 SGP API 突破 LCU 本地 20 筆上限，直接向 Riot 伺服器拉取最近 200 場對局，顯示英雄、KDA、傷害、裝備、符文
+- **分頁瀏覽**：可選每頁 10 / 20 / 50 / 100 / 200 筆，支援翻頁，偏移量正確傳遞
+- **對局狀態標記**：自動識別「重開 (Remake)」、「投降勝」、「投降敗」，以不同顏色標示
 - **10 人完整戰報**：點擊任意戰績卡片展開 Modal，顯示藍隊／紅隊全員數據
-- **增幅裝置支援**：Arena (大亂鬥 Mayhem) 模式自動顯示增幅裝置圖示及稀有度邊框
+- **增幅裝置支援**：Arena / Mayhem 模式自動顯示增幅裝置圖示及稀有度邊框（銀色／金色／彩虹）
 - **傷害雙條**：輸出傷害與承受傷害並排顯示，含相對進度條
 - **牌位顯示**：單排／彈性排位段位即時讀取
 - **自動接受配對**：偵測到配對時自動點擊接受
@@ -41,7 +43,23 @@ python main.py
 
 ## 原理
 
-本工具透過讀取本機的 `lockfile`（位於英雄聯盟安裝目錄）取得連接埠與密碼，再以 HTTPS + Basic Auth 存取 LCU API（`https://127.0.0.1:{port}`）。所有資料均在本機處理，不會上傳至任何伺服器。
+本工具透過讀取本機的 `lockfile`（位於英雄聯盟安裝目錄）取得連接埠與密碼，再以 HTTPS + Basic Auth 存取 LCU API（`https://127.0.0.1:{port}`）。
+
+### 200 場戰績的實作方式
+
+LCU 本地 API 每次最多只能回傳約 20 筆戰績。本工具參考 [LeagueAkari](https://github.com/LeagueAkari/LeagueAkari) 的架構，改用 **SGP（Service Gateway Proxy）API** 直接向 Riot 後端伺服器查詢：
+
+1. 啟動時從 `idToken` JWT payload 解析玩家所在伺服器（如 `TW2`）
+2. 從 `/entitlements/v1/token` 取得 Bearer 認證 Token
+3. 向對應區域的 SGP 端點發送請求：
+   ```
+   GET https://apse1-red.pp.sgp.pvp.net/match-history-query/v1/products/lol/player/{puuid}/SUMMARY
+       ?startIndex=0&count=200
+   Authorization: Bearer {entitlementToken}
+   ```
+4. SGP 無單次筆數限制，可一次取得任意數量。若 SGP 不可用，自動降級至 LCU + 本地 JSON 快取累加。
+
+所有資料均在本機處理，不會上傳至任何第三方伺服器。
 
 ## 注意事項
 
