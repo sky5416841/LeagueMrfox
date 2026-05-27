@@ -275,23 +275,79 @@ def _maybe_trigger_ingame_scan():
 
 
 def _scan_ingame_sync():
-    """背景執行緒：讀取 gameflow session，解析雙方 10 人後掃描各自近期戰力。"""
+    """背景執行緒：反匿名擊穿協議。
+    優先 coregame 底層端點（不受匿名遮罩），備援 gameflow session；
+    確保 10 人雷達不漏人，即使匿名玩家也強制顯示戰力數據。
+    """
     global _ingame_scan_in_progress
     try:
-        _log("INGAME_SCAN >> 讀取遊戲中陣容資料...")
-        session   = _client.get("/lol-gameflow/v1/session")
-        game_data = session.get("gameData", {})
-        team_one  = game_data.get("teamOne", [])
-        team_two  = game_data.get("teamTwo", [])
+        _log("INGAME_SCAN >> 反匿名擊穿協議啟動...")
+        all_raw: list[dict] = []
+        source = ""
 
-        if not team_one and not team_two:
-            _log("INGAME_SCAN >> gameData 無隊伍資料，放棄掃描")
+        # ═══ 底層端點 1：coregame（最低層，通常保留真實 PUUID）═══════════════
+        try:
+            cg         = _client.get("/lol-coregame/v1/session")
+            cg_players = cg.get("players", [])
+            if cg_players:
+                all_raw = list(cg_players)
+                source  = "coregame"
+                _log(f"INGAME_SCAN >> [coregame] 擊穿成功，{len(all_raw)} 位玩家就位")
+        except Exception as e:
+            _log(f"INGAME_SCAN >> [coregame] 無回應: {e}")
+
+        # ═══ 備援端點 2：gameflow session ════════════════════════════════════
+        if not all_raw:
+            try:
+                gf       = _client.get("/lol-gameflow/v1/session")
+                gd       = gf.get("gameData", {})
+                t1, t2   = gd.get("teamOne", []), gd.get("teamTwo", [])
+                for p in t1:
+                    p["_rawTeam"] = 100
+                for p in t2:
+                    p["_rawTeam"] = 200
+                all_raw = t1 + t2
+                source  = "gameflow"
+                _log(f"INGAME_SCAN >> [gameflow] 備援，{len(all_raw)} 位玩家")
+            except Exception as e:
+                _log(f"INGAME_SCAN >> [gameflow] 也失敗: {e}")
+
+        if not all_raw:
+            _log("INGAME_SCAN >> 所有端點均無玩家資料，放棄掃描")
             return
 
-        # 判斷自己在哪隊
-        self_in_one = any(p.get("puuid") == _puuid for p in team_one)
-        my_raw    = team_one  if self_in_one else team_two
-        enemy_raw = team_two  if self_in_one else team_one
+        # ═══ 統一隊伍 ID（相容 coregame "TEAM_100" 與 gameflow teamId=100）══
+        def _tid(p: dict) -> int:
+            raw = p.get("teamId") or p.get("_rawTeam", 0)
+            if raw in (100, 200):
+                return int(raw)
+            t = str(p.get("team", "")).upper()
+            return 100 if "100" in t else (200 if "200" in t else 0)
+
+        # ═══ 確認自己所在隊伍 ═════════════════════════════════════════════════
+        my_tid = 0
+        for p in all_raw:
+            if p.get("puuid") == _puuid:
+                my_tid = _tid(p); break
+
+        if not my_tid:
+            # coregame 中找不到自己時，再查一次 gameflow 確認隊伍
+            try:
+                gf = _client.get("/lol-gameflow/v1/session")
+                gd = gf.get("gameData", {})
+                if any(p.get("puuid") == _puuid for p in gd.get("teamOne", [])):
+                    my_tid = 100
+                elif any(p.get("puuid") == _puuid for p in gd.get("teamTwo", [])):
+                    my_tid = 200
+            except Exception:
+                pass
+
+        if not my_tid:
+            my_tid = 100  # 最後保底，不讓掃描完全失敗
+
+        my_raw    = [p for p in all_raw if _tid(p) == my_tid]
+        enemy_raw = [p for p in all_raw if _tid(p) != my_tid and _tid(p) != 0]
+        _log(f"INGAME_SCAN >> 我方 {len(my_raw)} + 敵方 {len(enemy_raw)}（來源: {source}）")
 
         def _scan_one(p: dict) -> dict:
             puuid    = p.get("puuid", "") or ""
@@ -299,50 +355,56 @@ def _scan_ingame_sync():
                 puuid = ""
             sid      = p.get("summonerId", 0)
             champ_id = p.get("championId", 0)
-            # gameflow session 中可能直接帶名稱
+            champ_nm = _get_champ_name(champ_id) if champ_id else ""
+
+            # 多欄位容錯取名（coregame: summonerName；gameflow: gameName/riotId）
             name = (
                 p.get("summonerName") or p.get("gameName") or
-                p.get("riotId") or ""
+                p.get("displayName")  or p.get("riotId")   or ""
             ).strip()
 
+            # 匿名玩家：有 PUUID 仍查戰績，名稱補英雄名作識別
+            is_anon = not name
+            if is_anon:
+                name = f"[匿名] {champ_nm}" if champ_nm else "[匿名]"
+
             entry = {
-                "name":        name or "?",
+                "name":        name,
                 "puuid":       puuid,
                 "isSelf":      puuid == _puuid,
-                "anonymous":   False,
+                "anonymous":   is_anon,
                 "championId":  champ_id,
-                "championName": _get_champ_name(champ_id) if champ_id else "",
+                "championName": champ_nm,
                 "wins": 0, "total": 0, "winRate": 0.0,
                 "avgKills": 0.0, "avgDeaths": 0.0, "avgAssists": 0.0,
                 "kda": 0.0, "error": False,
             }
 
-            # 名稱補漏：若 gameflow 未提供則查 summoner endpoint
-            if not name:
+            # 嘗試從 LCU 取真實名稱（即使匿名也試一次，有 sid/puuid 就查）
+            if is_anon and (sid or puuid):
                 try:
                     ep = (f"/lol-summoner/v1/summoners/{sid}" if sid
-                          else f"/lol-summoner/v1/summoners/by-puuid/{puuid}" if puuid
-                          else None)
-                    if ep:
-                        s = _client.get(ep)
-                        entry["name"] = (
-                            s.get("displayName") or s.get("gameName") or
-                            s.get("name") or "?"
-                        )
-                except Exception as e:
-                    _log(f"INGAME_SCAN >> 名稱失敗: {e}")
+                          else f"/lol-summoner/v1/summoners/by-puuid/{puuid}")
+                    s = _client.get(ep)
+                    real = (s.get("displayName") or s.get("gameName") or
+                            s.get("name") or "").strip()
+                    if real:
+                        entry["name"]      = real
+                        entry["anonymous"] = False
+                        is_anon = False
+                except Exception:
+                    pass
 
-            # 近 20 場戰績（SGP 優先，LCU 備援）
+            # 戰績查詢：有 PUUID 就查，不論是否匿名（這是擊穿的核心）
             if puuid:
                 try:
                     player_stats = _aggregate_player_stats(puuid)
                     entry.update(player_stats)
                 except Exception as e:
-                    _log(f"INGAME_SCAN >> 戰績失敗 {puuid[:8] if puuid else '?'}: {e}")
+                    _log(f"INGAME_SCAN >> 戰績失敗 {puuid[:8]}: {e}")
                     entry["error"] = True
             return entry
 
-        _log(f"INGAME_SCAN >> 掃描 {len(my_raw)} 友方 + {len(enemy_raw)} 敵方...")
         my_team    = [_scan_one(p) for p in my_raw]
         enemy_team = [_scan_one(p) for p in enemy_raw]
         _log(f"INGAME_SCAN >> 完成！{len(my_team)}+{len(enemy_team)} 人雷達就緒")

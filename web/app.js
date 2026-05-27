@@ -203,8 +203,8 @@ function _renderLiveCard(p) {
     ? `<span class="text-[9px] text-slate-600 tracking-wider">[${p.championName}]</span>`
     : '';
 
-  // 戰績區
-  const statsHtml = isAnon ? '<div class="text-[10px] text-slate-700">—</div>'
+  // 戰績區（匿名玩家只要有 PUUID 資料就照樣顯示，不隱藏）
+  const statsHtml = (isAnon && noData) ? '<div class="text-[10px] text-slate-500 italic">— 匿名 · 無資料 —</div>'
     : noData
     ? `<div class="text-[10px] text-slate-700">${p.error ? '抓取失敗' : '無戰績資料'}</div>`
     : `<div class="flex items-center gap-4 mt-1">
