@@ -90,6 +90,93 @@ function on_auto_ban_done(champId) {
   setTimeout(() => flash.classList.remove('flashing'), 700);
 }
 
+// ── 大廳 X 光機回調 ────────────────────────────────────────────────────
+eel.expose(on_lobby_scan_ready);
+function on_lobby_scan_ready(players) {
+  append_log(`LOBBY_SCAN ▶▶ 隊友情報就緒 (${players.length} 位)`, true);
+
+  const statusEl  = document.getElementById('live-status');
+  const playersEl = document.getElementById('live-players');
+  if (statusEl) statusEl.textContent = `掃描完成 · ${players.length} 位成員`;
+
+  if (!playersEl) return;
+  playersEl.innerHTML = players.map(p => _renderLiveCard(p)).join('');
+
+  // 自動切換至即時戰情頁籤
+  switchTab('live');
+}
+
+eel.expose(on_champ_select_ended);
+function on_champ_select_ended(phase) {
+  const badge  = document.getElementById('live-phase-badge');
+  const status = document.getElementById('live-status');
+  if (badge)  badge.textContent  = `[ ${phase === 'InGame' ? '遊戲進行中' : '對局結束'} ]`;
+  if (status) status.textContent = '已離開選角大廳，以下為本場隊友情報紀錄。';
+  append_log(`GAMEFLOW ▶▶ ${phase} — 即時戰情封存`, true);
+}
+
+function _renderLiveCard(p) {
+  const isAnon  = p.anonymous;
+  const isSelf  = p.isSelf;
+  const noData  = p.total === 0;
+  const wr      = p.winRate;
+
+  // 標籤邏輯
+  let badge = '';
+  if (isSelf) {
+    badge = '<span class="live-badge live-badge-self">[ 你 ]</span>';
+  } else if (!isAnon && !noData) {
+    if (wr >= 60) {
+      badge = '<span class="live-badge live-badge-ace">[ ⭐ 絕活大腿 ]</span>';
+    } else if (wr < 40) {
+      badge = '<span class="live-badge live-badge-danger">[ 🚨 避雷警告 ]</span>';
+    }
+  }
+
+  // 勝率顏色
+  const wrColor = wr >= 60 ? '#4ade80'
+                : wr >= 50 ? '#a3e635'
+                : wr >= 40 ? '#fb923c'
+                : '#f87171';
+
+  // 名稱顯示
+  const nameHtml = isAnon
+    ? '<span class="text-slate-600 italic">匿名玩家</span>'
+    : `<span class="text-slate-200 tracking-wide">${p.name}</span>`;
+
+  // 戰績區
+  const statsHtml = isAnon ? '<div class="text-[10px] text-slate-700">—</div>'
+    : noData
+    ? `<div class="text-[10px] text-slate-700">${p.error ? '抓取失敗' : '無戰績資料'}</div>`
+    : `<div class="flex items-center gap-4 mt-1">
+         <div class="text-[10px]">
+           <span class="text-slate-600">近${p.total}場</span>
+           <span class="ml-1" style="color:${wrColor}">${wr}%</span>
+           <span class="text-slate-700 ml-1">${p.wins}W ${p.total - p.wins}L</span>
+         </div>
+         <div class="text-[10px] text-slate-500">
+           KDA <span class="text-slate-400">${p.kda}</span>
+           <span class="text-slate-700 ml-2">${p.avgKills}/${p.avgDeaths}/${p.avgAssists}</span>
+         </div>
+       </div>
+       <div class="live-wr-bar mt-1">
+         <div class="live-wr-fill" style="width:${wr}%;background:${wrColor}"></div>
+       </div>`;
+
+  const selfClass = isSelf ? ' live-card-self' : '';
+
+  return `
+    <div class="live-card${selfClass}">
+      <div class="flex items-center gap-3">
+        <div class="live-cell-id">${p.cellId}</div>
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2 flex-wrap">${nameHtml}${badge}</div>
+          ${statsHtml}
+        </div>
+      </div>
+    </div>`;
+}
+
 // ── 英雄選擇器 ─────────────────────────────────────────────────────────
 function _champNameById(id) {
   const c = _champList.find(c => c.id === id);

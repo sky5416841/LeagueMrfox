@@ -46,6 +46,10 @@ _auto_ban_champ_id = 0
 _last_ban_action_id = -1   # 防止對同一個 ban action 重複觸發
 _champ_valid_ids: set[int] = set()  # 僅含有 roles 的正常可玩英雄，過濾 NPC
 
+# 大廳 X 光機：掃描隊友戰力
+_last_scanned_team_key  = ''   # 防止對同一場大廳重複掃描
+_lobby_scan_in_progress = False
+
 # 本地戰績快取路徑（data/ 已在 .gitignore，個人數據不上傳）
 _MATCH_CACHE_FILE = os.path.join(os.path.dirname(__file__), "data", "match_history_cache.json")
 
@@ -79,6 +83,127 @@ def _log(msg: str):
         eel.append_log(msg)()
     except Exception:
         print(f"[LOG] {msg}")
+
+
+def _maybe_trigger_lobby_scan(my_team: list):
+    """若大廳成員組合改變，啟動背景執行緒掃描所有隊友。"""
+    global _last_scanned_team_key, _lobby_scan_in_progress
+    # 用 cellId 組成穩定的場次識別鍵（cellId 在同一場選角內固定）
+    team_key = ",".join(sorted(str(p.get("cellId", -1)) for p in my_team))
+    if not team_key or team_key == _last_scanned_team_key or _lobby_scan_in_progress:
+        return
+    _last_scanned_team_key  = team_key
+    _lobby_scan_in_progress = True
+    threading.Thread(target=_scan_lobby_sync, args=(list(my_team),), daemon=True).start()
+
+
+def _scan_lobby_sync(my_team: list):
+    """背景執行緒：逐一取得隊友召喚師名稱與近 20 場戰績，完成後推播至前端。"""
+    global _lobby_scan_in_progress
+    try:
+        _log(f"LOBBY_SCAN >> 開始掃描 {len(my_team)} 位成員...")
+        results = []
+
+        for player in my_team:
+            sid        = player.get("summonerId", 0)
+            puuid      = player.get("puuid", "") or ""
+            cell_id    = player.get("cellId", -1)
+            visibility = player.get("nameVisibilityType", "VISIBLE")
+            is_anon    = (visibility == "HIDDEN") or (not sid and not puuid)
+            is_self    = (puuid == _puuid) if puuid else False
+
+            entry = {
+                "cellId":     cell_id,
+                "name":       "匿名玩家" if is_anon else "?",
+                "anonymous":  is_anon,
+                "isSelf":     is_self,
+                "wins":       0, "total":      0,
+                "winRate":    0.0,
+                "avgKills":   0.0, "avgDeaths":  0.0, "avgAssists": 0.0,
+                "kda":        0.0,
+                "error":      False,
+            }
+
+            if is_anon:
+                results.append(entry)
+                continue
+
+            # ── 取召喚師名稱 ──────────────────────────────────────────
+            try:
+                if sid:
+                    s = _client.get(f"/lol-summoner/v1/summoners/{sid}")
+                    entry["name"] = (s.get("displayName") or
+                                     s.get("gameName")    or
+                                     s.get("name")        or "?")
+                    if not puuid:
+                        puuid = s.get("puuid", "")
+                elif puuid:
+                    s = _client.get(f"/lol-summoner/v1/summoners/by-puuid/{puuid}")
+                    entry["name"] = (s.get("displayName") or
+                                     s.get("gameName")    or
+                                     s.get("name")        or "?")
+            except Exception as e:
+                _log(f"LOBBY_SCAN >> 名稱失敗 sid={sid}: {e}")
+                entry["error"] = True
+
+            # ── 取近 20 場戰績 ────────────────────────────────────────
+            try:
+                if puuid:
+                    raw   = _client.get(
+                        f"/lol-match-history/v1/products/lol/{puuid}/matches"
+                        f"?begIndex=0&endIndex=20"
+                    )
+                    games = raw.get("games", {}).get("games", [])
+                    wins = kills = deaths = assists = count = 0
+
+                    for g in games:
+                        if g.get("gameDuration", 999) < 240:
+                            continue  # 排除重開
+                        pdata = None
+                        for p in g.get("participants", []):
+                            if p.get("puuid") == puuid:
+                                pdata = p; break
+                        if not pdata:
+                            for ident in g.get("participantIdentities", []):
+                                if ident.get("player", {}).get("puuid") == puuid:
+                                    pid   = ident.get("participantId")
+                                    pdata = next((p for p in g.get("participants", [])
+                                                  if p.get("participantId") == pid), None)
+                                    break
+                        if not pdata:
+                            continue
+                        stats = pdata.get("stats") or pdata
+                        if stats.get("win") is None and stats.get("kills") is None:
+                            continue
+                        count   += 1
+                        wins    += 1 if stats.get("win") else 0
+                        kills   += stats.get("kills",   0)
+                        deaths  += stats.get("deaths",  0)
+                        assists += stats.get("assists", 0)
+
+                    if count > 0:
+                        entry.update({
+                            "wins":       wins,
+                            "total":      count,
+                            "winRate":    round(wins / count * 100, 1),
+                            "avgKills":   round(kills   / count, 1),
+                            "avgDeaths":  round(deaths  / count, 1),
+                            "avgAssists": round(assists / count, 1),
+                            "kda":        round((kills + assists) / max(deaths, 1), 2),
+                        })
+            except Exception as e:
+                _log(f"LOBBY_SCAN >> 戰績失敗 puuid={puuid[:8] if puuid else '?'}: {e}")
+                entry["error"] = True
+
+            results.append(entry)
+
+        _log(f"LOBBY_SCAN >> 完成！{len(results)} 位玩家情報就緒")
+        try:
+            eel.on_lobby_scan_ready(results)()
+        except Exception as e:
+            _log(f"LOBBY_SCAN_EEL_ERR >> {e}")
+    finally:
+        _lobby_scan_in_progress = False
 
 
 def _load_match_cache() -> dict:
@@ -762,6 +887,24 @@ def set_auto_ban(enabled: bool, champ_id: int):
 
 
 @eel.expose
+def trigger_lobby_scan():
+    """前端手動觸發：重新掃描當前選角大廳的隊友戰力。"""
+    global _last_scanned_team_key
+    if not _client:
+        return
+    try:
+        session = _client.get("/lol-champ-select/v1/session")
+        my_team = session.get("myTeam", [])
+        if not my_team:
+            _log("LOBBY_SCAN >> 目前不在選角大廳")
+            return
+        _last_scanned_team_key = ""  # 強制重新掃描
+        _maybe_trigger_lobby_scan(my_team)
+    except Exception as e:
+        _log(f"LOBBY_SCAN >> 手動觸發失敗: {e}")
+
+
+@eel.expose
 def get_champion_list() -> list:
     """回傳已排序的英雄清單 [{id, name}, ...]，嘗試多端點確保完整性。"""
     if not _client:
@@ -1035,11 +1178,13 @@ async def _ws_listen() -> bool:
             ping_interval=20,
             ping_timeout=10,
         ) as ws:
-            _log("WS_STREAM >> ACTIVE // 訂閱配對與選角事件")
+            _log("WS_STREAM >> ACTIVE // 訂閱配對、選角、Gameflow 事件")
             # 訂閱配對就緒確認
             await ws.send(json.dumps([5, "OnJsonApiEvent_lol-matchmaking_v1_ready-check"]))
             # 訂閱英雄選擇階段（LeagueAkari 核心技術：監聽 champ-select session）
             await ws.send(json.dumps([5, "OnJsonApiEvent_lol-champ-select_v1_session"]))
+            # 訂閱 Gameflow 狀態變更（偵測選角結束以重置掃描鍵）
+            await ws.send(json.dumps([5, "OnJsonApiEvent_lol-gameflow_v1_gameflow-phase"]))
             while not _ws_stop.is_set():
                 try:
                     raw = await asyncio.wait_for(ws.recv(), timeout=30)
@@ -1073,6 +1218,8 @@ async def _handle_event(event: dict):
         await _handle_ready_check(data or {})
     elif "champ-select" in uri:
         await _handle_champ_select(data or {})
+    elif "gameflow-phase" in uri:
+        _handle_gameflow_phase(data)
 
 
 async def _handle_ready_check(data: dict):
@@ -1102,6 +1249,23 @@ async def _handle_ready_check(data: dict):
         _log(f"READY_CHECK >> state={state} response={resp}")
 
 
+def _handle_gameflow_phase(phase):
+    """當 Gameflow 狀態改變時呼叫：重置大廳掃描鍵、通知前端選角已結束。"""
+    global _last_scanned_team_key
+    if not isinstance(phase, str):
+        return
+    _log(f"GAMEFLOW >> 狀態 → {phase}")
+    # 離開選角大廳時重置掃描鍵，讓下次入場重新掃描
+    if phase not in ("ChampSelect",):
+        _last_scanned_team_key = ""
+    # 通知前端（進入遊戲 / 結束遊戲）
+    if phase in ("InGame", "EndOfGame", "PreEndOfGame", "WaitingForStats", "Reconnect"):
+        try:
+            eel.on_champ_select_ended(phase)()
+        except Exception:
+            pass
+
+
 async def _handle_champ_select(data: dict):
     """
     LeagueAkari 核心技術：英雄選擇階段自動秒選／禁角。
@@ -1119,6 +1283,11 @@ async def _handle_champ_select(data: dict):
             all_actions.extend(phase)
         elif isinstance(phase, dict):
             all_actions.append(phase)
+
+    # 大廳 X 光機：每次 session 更新時嘗試觸發（內部有重複觸發防護）
+    my_team = data.get("myTeam", [])
+    if my_team:
+        _maybe_trigger_lobby_scan(my_team)
 
     for action in all_actions:
         if action.get("actorCellId") != local_cell:

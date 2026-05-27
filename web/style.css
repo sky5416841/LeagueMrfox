@@ -819,3 +819,56 @@ body, input, button, textarea {
   border-radius: 2px;
   transition: width .6s ease;
 }
+
+/* ── Live Tab (大廳 X 光機) ───────────────────────────────────────── */
+.live-card {
+  background: rgba(2,10,20,0.55);
+  border: 1px solid rgba(6,182,212,0.07);
+  border-radius: 3px;
+  padding: 8px 12px;
+  transition: border-color .2s;
+}
+.live-card:hover {
+  border-color: rgba(6,182,212,0.2);
+}
+.live-card-self {
+  border-left: 3px solid rgba(6,182,212,0.5);
+  background: rgba(6,182,212,0.04);
+}
+
+.live-cell-id {
+  width: 18px;
+  height: 18px;
+  border: 1px solid rgba(6,182,212,0.18);
+  border-radius: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  color: #334155;
+  flex-shrink: 0;
+}
+
+.live-badge {
+  font-size: 9px;
+  letter-spacing: .08em;
+  padding: 1px 5px;
+  border-radius: 2px;
+  border: 1px solid transparent;
+  font-weight: normal;
+}
+.live-badge-self   { color:#67e8f9; border-color:rgba(103,232,249,0.3); background:rgba(6,182,212,0.08); }
+.live-badge-ace    { color:#fbbf24; border-color:rgba(251,191,36,0.35); background:rgba(251,191,36,0.06); }
+.live-badge-danger { color:#f87171; border-color:rgba(248,113,113,0.35); background:rgba(239,68,68,0.06); }
+
+.live-wr-bar {
+  height: 3px;
+  background: rgba(15,23,42,0.8);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.live-wr-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width .5s ease;
+}
