@@ -71,7 +71,7 @@ class LCUClient:
         url = self._base_url + endpoint
         response = self._session.request(method, url, **kwargs)
         response.raise_for_status()
-        return response.json()
+        return response.json() if response.content else {}
 
     def get(self, endpoint: str, **kwargs):
         return self.request("GET", endpoint, **kwargs)
@@ -81,6 +81,9 @@ class LCUClient:
 
     def put(self, endpoint: str, **kwargs):
         return self.request("PUT", endpoint, **kwargs)
+
+    def patch(self, endpoint: str, **kwargs):
+        return self.request("PATCH", endpoint, **kwargs)
 
     def delete(self, endpoint: str, **kwargs):
         return self.request("DELETE", endpoint, **kwargs)

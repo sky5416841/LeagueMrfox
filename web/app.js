@@ -1,9 +1,16 @@
 'use strict';
 
-let autoAcceptEnabled = false;
+let autoAcceptEnabled  = false;
+let autoPickEnabled    = false;
+let autoPickChampId    = 0;
 let currentPage    = 1;
 let itemsPerPage   = 20;
 let _lastMatchCount = 0;
+let _champList     = [];   // [{id, name}, ...]
+
+// ── 共用圖片佔位符 ──────────────────────────────────────────────────────
+const IMG_PH  = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E";
+const IMG_ERR = "this.onerror=null;this.classList.add('img-err')";
 
 // ── 時鐘 ───────────────────────────────────────────────────────────────
 (function tickClock() {
@@ -17,14 +24,9 @@ let _lastMatchCount = 0;
 
 // ── 頁籤切換 ────────────────────────────────────────────────────────────
 function switchTab(tab) {
-  // 隱藏所有 section
   document.querySelectorAll('.tab-section').forEach(s => s.classList.add('hidden'));
-  // 移除所有 nav active
   document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
-
-  // 顯示目標 section
   document.getElementById(`tab-${tab}`).classList.remove('hidden');
-  // 標記目標 nav
   document.getElementById(`nav-${tab}`).classList.add('active');
 }
 
@@ -61,7 +63,126 @@ function on_match_accepted() {
   setTimeout(() => flash.classList.remove('flashing'), 700);
 }
 
-// 安全取 DOM 元素，避免 null 炸掉整個 updateUI
+// ── 自動選角鎖定回調 ────────────────────────────────────────────────────
+eel.expose(on_auto_pick_done);
+function on_auto_pick_done(champId) {
+  const name = _champNameById(champId);
+  append_log(`AUTO_PICK ▶▶ ${name} 已秒選鎖定 ✓✓`, true);
+  const flash = document.getElementById('accept-flash');
+  flash.classList.remove('flashing');
+  void flash.offsetWidth;
+  flash.classList.add('flashing');
+  setTimeout(() => flash.classList.remove('flashing'), 700);
+}
+
+// ── 英雄選擇器 ─────────────────────────────────────────────────────────
+function _champNameById(id) {
+  const c = _champList.find(c => c.id === id);
+  return c ? c.name : `ID=${id}`;
+}
+
+async function _loadChampionList() {
+  try {
+    _champList = await eel.get_champion_list()();
+    append_log(`CHAMP_LIST >> 已載入 ${_champList.length} 位英雄至選擇器`);
+  } catch (e) {
+    append_log(`CHAMP_LIST_ERR >> ${e}`, true);
+  }
+}
+
+function _renderChampDropdown(query) {
+  const dd = document.getElementById('champ-picker-dropdown');
+  if (!dd) return;
+  const q    = (query || '').trim().toLowerCase();
+  const filtered = _champList.filter(c => {
+    if (!c.name || c.id <= 0) return false;
+    if (c.name.includes('末日')) return false;
+    if (c.name.includes('NPC'))  return false;
+    return true;
+  });
+  const list = q ? filtered.filter(c => c.name.toLowerCase().includes(q)) : filtered;
+  const show = list.slice(0, 80);
+
+  if (list.length === 0) {
+    dd.innerHTML = '<div class="champ-picker-more">找不到符合的英雄</div>';
+    return;
+  }
+  dd.innerHTML = show.map(c =>
+    `<div class="champ-picker-item${autoPickChampId === c.id ? ' selected' : ''}"
+          onclick="selectChamp(${c.id},'${c.name.replace(/'/g, "\\'")}')">
+       ${c.name}
+     </div>`
+  ).join('');
+  if (list.length > 80) {
+    dd.innerHTML += `<div class="champ-picker-more">...還有 ${list.length - 80} 位，請輸入更精確名稱</div>`;
+  }
+}
+
+function openChampPicker() {
+  const dd = document.getElementById('champ-picker-dropdown');
+  if (dd) dd.classList.remove('hidden');
+  _renderChampDropdown(document.getElementById('ap-champ-search').value);
+}
+
+function filterChampPicker(query) {
+  const dd = document.getElementById('champ-picker-dropdown');
+  if (dd) dd.classList.remove('hidden');
+  _renderChampDropdown(query);
+}
+
+function selectChamp(id, name) {
+  autoPickChampId = id;
+  const input = document.getElementById('ap-champ-search');
+  if (input) input.value = name;
+  const hint  = document.getElementById('ap-champ-hint');
+  if (hint)  hint.textContent = `ID=${id}`;
+  const dd = document.getElementById('champ-picker-dropdown');
+  if (dd) dd.classList.add('hidden');
+  if (autoPickEnabled) eel.set_auto_pick(autoPickEnabled, autoPickChampId);
+}
+
+// 點選選擇器外部時關閉下拉
+document.addEventListener('click', (e) => {
+  const wrap = document.getElementById('champ-picker-wrap');
+  if (wrap && !wrap.contains(e.target)) {
+    const dd = document.getElementById('champ-picker-dropdown');
+    if (dd) dd.classList.add('hidden');
+  }
+});
+
+// ESC 同時關閉選擇器與 Modal
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  const dd = document.getElementById('champ-picker-dropdown');
+  if (dd) dd.classList.add('hidden');
+  closeGameModal();
+});
+
+// ── 自動選角開關 ────────────────────────────────────────────────────────
+function toggleAutoPick() {
+  autoPickEnabled = !autoPickEnabled;
+
+  const btn  = document.getElementById('auto-pick-btn');
+  const lbl  = document.getElementById('ap-label');
+  const ind  = document.getElementById('ap-indicator');
+  const desc = document.getElementById('ap-desc');
+
+  if (autoPickEnabled) {
+    btn.classList.add('engaged');
+    lbl.innerHTML = '<span class="glow-orange">[ 自動選角：已啟動 ]</span>';
+    ind.className = 'w-3 h-3 bg-orange-500 border-2 border-orange-400 transition-all duration-300 shadow-[0_0_8px_rgba(251,146,60,0.8)] shrink-0';
+    desc.innerHTML = '<span style="color:rgba(251,146,60,0.55)">偵測到選角輪到行動時，自動秒選並鎖定。</span>';
+  } else {
+    btn.classList.remove('engaged');
+    lbl.textContent = '[ 自動選角 ]';
+    lbl.style       = '';
+    ind.className   = 'w-3 h-3 border-2 border-slate-700 bg-transparent transition-all duration-300 shrink-0';
+    desc.innerHTML  = '選角階段輪到行動時，自動秒選並鎖定指定英雄。';
+  }
+
+  eel.set_auto_pick(autoPickEnabled, autoPickChampId);
+}
+
 function _el(id) {
   const el = document.getElementById(id);
   if (!el) console.error(`[LCU] 找不到 DOM 元素: #${id}`);
@@ -174,16 +295,61 @@ async function loadMatchHistory() {
 
   const begIndex = (currentPage - 1) * itemsPerPage;
   const endIndex = currentPage * itemsPerPage;
-  const matches  = await eel.get_match_history(begIndex, endIndex)();
-  list.innerHTML = '';
 
-  _lastMatchCount = matches ? matches.length : 0;
+  let matches = [];
+  try {
+    matches = await eel.get_match_history(begIndex, endIndex)();
+  } catch (err) {
+    append_log(`MATCH_ERR >> 後端通訊失敗: ${err}`, true);
+    matches = [];
+  }
+
+  list.innerHTML = '';
+  _lastMatchCount = Array.isArray(matches) ? matches.length : 0;
   _updatePaginationUI(false);
 
+  // ── 前端備援符文解析 ──────────────────────────────────────────────────
+  // 若後端三格式解析仍回傳全零（部分版本 LCU 資料結構不同），
+  // 直接在前端解析 perksRaw.styles[].selections[].perk 作為保底。
+  for (const m of (matches || [])) {
+    if (m.isArena || !m.perksRaw) continue;
+    const hasRunes = (m.runes || []).some(id => id > 0);
+    if (!hasRunes) {
+      const parsed = [];
+      for (const style of (m.perksRaw.styles || [])) {
+        for (const sel of (style.selections || [])) {
+          if (sel.perk) parsed.push(sel.perk);
+        }
+      }
+      if (parsed.length === 0 && (m.perksRaw.perkIds || []).length > 0) {
+        parsed.push(...m.perksRaw.perkIds.slice(0, 6));
+      }
+      if (parsed.length > 0) {
+        m.runes = parsed.slice(0, 6);
+        append_log(`PERK_FALLBACK >> gameId=${m.gameId} 前端解析出 ${parsed.length} 個符文 ID`);
+      }
+    }
+    const hasStatPerks = (m.statPerks || []).some(id => id > 0);
+    if (!hasStatPerks) {
+      const sp   = m.perksRaw.statPerks || {};
+      const pids = m.perksRaw.perkIds   || [];
+      if (sp.offense || sp.flex || sp.defense) {
+        m.statPerks = [sp.offense || 0, sp.flex || 0, sp.defense || 0];
+      } else if (pids.length >= 9) {
+        m.statPerks = pids.slice(6, 9);
+      }
+    }
+  }
+
   if (!matches || matches.length === 0) {
-    list.innerHTML =
-      '<div class="py-8 text-center text-[10px] text-slate-700 tracking-[0.2em]">' +
-      '── 尚無對局紀錄 ──</div>';
+    const isFirstPage = currentPage === 1;
+    list.innerHTML = isFirstPage
+      ? '<div class="no-more-records">── 尚無作戰紀錄 ──</div>'
+      : '<div class="no-more-records">' +
+          '<span class="no-more-bracket">[ EOF ]</span>' +
+          ' // 查無更多作戰紀錄' +
+          '<span class="no-more-hint">已抵達本地快取底部</span>' +
+        '</div>';
     return;
   }
 
@@ -192,16 +358,23 @@ async function loadMatchHistory() {
     list.appendChild(card);
     _loadChampIcon(m.championId, card.querySelector('.champ-img'));
     _loadItemIcons(m.items || [], card.querySelectorAll('.item-icon'));
+    _loadSpellIcons([m.spell1Id, m.spell2Id], card.querySelectorAll('.spell-icon'));
+    if (m.isArena) {
+      const validAugs = (m.augments || []).filter(a => a && a.id > 0);
+      _loadAugmentIcons(validAugs.map(a => a.id), card.querySelectorAll('.mc-aug-icon'));
+    } else {
+      _loadRuneIcons((m.runes || []).filter(x => x > 0), card.querySelectorAll('.mc-rune-icon'));
+    }
   }
 }
 
 function _updatePaginationUI(loading) {
-  const pageEl = document.getElementById('current-page');
+  const pageEl  = document.getElementById('current-page');
   const prevBtn = document.getElementById('prev-page');
   const nextBtn = document.getElementById('next-page');
-  if (pageEl) pageEl.textContent = currentPage;
-  if (prevBtn) prevBtn.disabled = loading || currentPage <= 1;
-  if (nextBtn) nextBtn.disabled = loading || _lastMatchCount < itemsPerPage;
+  if (pageEl)  pageEl.textContent  = currentPage;
+  if (prevBtn) prevBtn.disabled    = loading || currentPage <= 1;
+  if (nextBtn) nextBtn.disabled    = loading || _lastMatchCount < itemsPerPage;
 }
 
 async function _loadChampIcon(champId, imgEl) {
@@ -220,58 +393,334 @@ async function _loadItemIcons(items, iconEls) {
     const id = items[i] || 0;
     if (!id) continue;
     const src = await eel.get_item_image_base64_by_id(id)();
+    if (src) { iconEls[i].src = src; iconEls[i].classList.remove('empty'); }
+  }
+}
+
+async function _loadRuneIcons(ids, iconEls) {
+  for (let i = 0; i < iconEls.length; i++) {
+    const id = ids[i] || 0;
+    if (!id) continue;
+    const src = await eel.get_perk_image_base64_by_id(id)();
+    if (src) { iconEls[i].src = src; iconEls[i].classList.remove('empty'); }
+  }
+}
+
+async function _loadAugmentIcons(ids, iconEls) {
+  for (let i = 0; i < iconEls.length; i++) {
+    const id = ids[i] || 0;
+    if (!id) continue;
+    const src = await eel.get_augment_image_base64_by_id(id)();
     if (src) {
       iconEls[i].src = src;
       iconEls[i].classList.remove('empty');
+      iconEls[i].classList.add('augment-icon');
     }
   }
 }
 
+async function _loadPerkStyleIcon(styleId, imgEl) {
+  if (!styleId || !imgEl) return;
+  const src = await eel.get_perkstyle_image_base64_by_id(styleId)();
+  if (src) { imgEl.src = src; imgEl.classList.remove('empty'); }
+}
+
+async function _loadSpellIcons(spells, iconEls) {
+  for (let i = 0; i < iconEls.length; i++) {
+    const id = spells[i] || 0;
+    if (!id) continue;
+    const src = await eel.get_spell_image_base64_by_id(id)();
+    if (src) { iconEls[i].src = src; iconEls[i].classList.remove('empty'); }
+  }
+}
+
+// ── 隊列名稱對照表 ──────────────────────────────────────────────────────
 const queueMap = {
-  420: '單雙積分', 440: '彈性積分', 450: '隨機單中',
-  430: '盲選模式', 400: '一般對戰', 490: '快速對戰', 1700: '競技場',
+  420: '單雙積分',  440: '彈性積分',  450: '大亂鬥',
+  430: '盲選模式',  400: '一般對戰',  490: '快速對戰',
+  1700: '競技場',   700: '衝突',      900: 'URF',
+  1020: '克隆模式', 1010: '雪球URF',  325: '輪替模式',
+  1300: '節日模式', 830: 'AI對戰',    840: 'AI對戰',
+  850: 'AI對戰',   1090: '鬥魂競技', 1100: '鬥魂競技',
+  1111: '鬥魂競技', 2400: '隨機單中 : 大混戰',
 };
 
+// ── 戰績卡片 ────────────────────────────────────────────────────────────
 function _buildMatchCard(m) {
   const card = document.createElement('div');
   card.className = `match-card ${m.win ? 'win' : 'loss'}`;
 
-  const kda       = m.deaths === 0
+  // 有 gameId 則支援點擊展開 10 人詳細
+  if (m.gameId) {
+    card.style.cursor = 'pointer';
+    card.title = '點擊查看 10 人完整戰績';
+    card.addEventListener('click', () => openGameModal(m.gameId));
+  }
+
+  const kdaVal    = m.deaths === 0
     ? '<span style="color:#fbbf24">完美</span>'
     : ((m.kills + m.assists) / m.deaths).toFixed(2);
   const mins      = Math.floor(m.duration / 60);
   const secs      = String(m.duration % 60).padStart(2, '0');
-  const queueName = queueMap[m.queueId] || m.queue || '一般對戰';
-
-  const PLACEHOLDER = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E";
+  const queueName = queueMap[m.queueId] || `隊列(${m.queueId})`;
+  const dmgStr    = m.damage ? m.damage.toLocaleString() + '傷' : '---';
 
   const itemsHtml = (m.items || [0,0,0,0,0,0]).slice(0, 6).map(() =>
-    `<img src="${PLACEHOLDER}" class="item-icon empty" alt="">`
+    `<img src="${IMG_PH}" class="item-icon empty" alt="" onerror="${IMG_ERR}">`
   ).join('');
 
+  // 稀有度邊框（與 Modal 一致）
+  const _border = r => r >= 2 ? '1px solid #d946ef' : r === 1 ? '1px solid #eab308' : '1px solid #9ca3af';
+
+  // 增幅裝置優先，無增幅才顯示符文，完全無資料留空
+  let perkHtml = '';
+  if (m.isArena) {
+    const validAugs = (m.augments || []).filter(a => a && a.id > 0);
+    perkHtml = validAugs.map(a =>
+      `<img src="${IMG_PH}" class="mc-perk-img mc-aug-icon empty"
+            style="border:${_border(a.rarity)}" alt=""
+            onerror="this.onerror=null;this.style.display='none'">`
+    ).join('');
+  } else {
+    const allPerks = (m.runes || []).filter(x => x > 0);
+    perkHtml = allPerks.map(() =>
+      `<img src="${IMG_PH}" class="mc-perk-img mc-rune-icon empty"
+            alt="" onerror="this.onerror=null;this.style.display='none'">`
+    ).join('');
+  }
+
   card.innerHTML = `
-    <img src="${PLACEHOLDER}" class="champ-img" alt="${m.championName}" title="${m.championName}">
-    <div class="card-content">
-      <div class="card-row">
-        <span class="champ-name" style="width:90px;flex-shrink:0">${m.championName}</span>
-        <div class="kda-block">
-          <span class="k">${m.kills}</span><span class="sep">/</span>
-          <span class="d">${m.deaths}</span><span class="sep">/</span>
-          <span class="a">${m.assists}</span>
-          <span class="ratio">比率 ${kda}</span>
-        </div>
-        <div class="flex-1"></div>
-        <div class="result ${m.win ? 'win-badge' : 'loss-badge'}">${m.win ? '[ 勝利 ]' : '[ 失敗 ]'}</div>
+    <div class="mc-left">
+      <img src="${IMG_PH}" class="champ-img" alt="${m.championName}" title="${m.championName}" onerror="${IMG_ERR}">
+      <div class="mc-spells">
+        <img src="${IMG_PH}" class="spell-icon empty" alt="" onerror="${IMG_ERR}">
+        <img src="${IMG_PH}" class="spell-icon empty" alt="" onerror="${IMG_ERR}">
       </div>
-      <div class="card-row">
-        <span class="game-mode" style="width:90px;flex-shrink:0">${queueName}</span>
-        <div class="items-row">${itemsHtml}</div>
-        <div class="flex-1"></div>
+      <div class="mc-perk-wrap">${perkHtml}</div>
+      <div class="mc-name">
+        <span class="champ-name" title="${m.championName}">${m.championName}</span>
+        <span class="game-mode">${queueName}</span>
+      </div>
+    </div>
+    <div class="mc-mid">
+      <div class="kda-block">
+        <span class="k">${m.kills}</span><span class="sep">/</span>
+        <span class="d">${m.deaths}</span><span class="sep">/</span>
+        <span class="a">${m.assists}</span>
+      </div>
+      <span class="kda-ratio">${kdaVal} KDA</span>
+      <span class="damage-val" style="margin-top:3px">${dmgStr}</span>
+    </div>
+    <div class="mc-right">
+      <div class="mc-items">${itemsHtml}</div>
+      <div class="mc-meta">
         <span class="duration">${mins}:${secs}</span>
+        <div class="result ${m.win ? 'win-badge' : 'loss-badge'}">${m.win ? '[ 勝利 ]' : '[ 失敗 ]'}</div>
       </div>
     </div>`;
 
   return card;
+}
+
+// ── 對局詳細 Modal ──────────────────────────────────────────────────────
+async function openGameModal(gameId) {
+  if (!gameId) return;
+  const modal = document.getElementById('game-modal');
+  modal.style.display = 'flex';
+
+  document.getElementById('modal-meta').textContent    = `#${gameId}  //  資料載入中...`;
+  document.getElementById('modal-blue-list').innerHTML = '<div class="modal-loading">▮ 藍隊資料載入中...</div>';
+  document.getElementById('modal-red-list').innerHTML  = '<div class="modal-loading">▮ 紅隊資料載入中...</div>';
+
+  try {
+    const data = await eel.get_game_detail(gameId)();
+    if (!data || (!data.blue && !data.red)) {
+      document.getElementById('modal-meta').textContent    = `#${gameId}  //  載入失敗`;
+      document.getElementById('modal-blue-list').innerHTML = '<div class="modal-loading">// 無法取得資料</div>';
+      document.getElementById('modal-red-list').innerHTML  = '';
+      return;
+    }
+    const mins = Math.floor((data.duration || 0) / 60);
+    const secs = String((data.duration || 0) % 60).padStart(2, '0');
+    document.getElementById('modal-meta').textContent = `#${gameId}  //  時長 ${mins}:${secs}`;
+
+    // 計算全場最高傷害，用來繪製相對傷害長條圖
+    const allPlayers    = [...(data.blue || []), ...(data.red || [])];
+    const maxDamage     = Math.max(1, ...allPlayers.map(p => p.damage      || 0));
+    const maxDamageTaken = Math.max(1, ...allPlayers.map(p => p.damageTaken || 0));
+
+    try {
+      const objs = data.objectives || {};
+      _renderModalTeam('modal-blue-list', data.blue || [], maxDamage, maxDamageTaken, 'blue', objs[100] || objs['100'] || {});
+      _renderModalTeam('modal-red-list',  data.red  || [], maxDamage, maxDamageTaken, 'red',  objs[200] || objs['200'] || {});
+    } catch (renderErr) {
+      console.error('Modal Render Error:', renderErr);
+      document.getElementById('modal-blue-list').innerHTML = `<div class="modal-loading">// 渲染失敗: ${renderErr.message}</div>`;
+      document.getElementById('modal-red-list').innerHTML  = '';
+    }
+  } catch (e) {
+    console.error('Modal Load Error:', e);
+    append_log(`MODAL_ERR >> ${e}`, true);
+    document.getElementById('modal-meta').textContent     = `#${gameId}  //  連線錯誤`;
+    document.getElementById('modal-blue-list').innerHTML  = '<div class="modal-loading">// 資料取得失敗，請查看 Console</div>';
+    document.getElementById('modal-red-list').innerHTML   = '';
+  }
+}
+
+function closeGameModal() {
+  const modal = document.getElementById('game-modal');
+  if (modal) modal.style.display = 'none';
+}
+
+function _renderModalTeam(sectionId, players, maxDamage, maxDamageTaken, teamColor, objectives) {
+  const section = document.getElementById(sectionId);
+  section.innerHTML = '';
+  const obj = objectives || {};
+
+  // ── 隊伍標題（勝敗 + 總計 KDA + 地圖目標）──
+  const teamName = teamColor === 'blue' ? '藍隊' : '紅隊';
+  const teamWin  = players.length > 0 && players[0].win;
+  const winLabel = teamWin ? '勝利' : '失敗';
+  const winColor = teamWin ? (teamColor === 'blue' ? '#22d3ee' : '#34d399') : '#f87171';
+  const totalK   = players.reduce((s, p) => s + (p.kills   || 0), 0);
+  const totalD   = players.reduce((s, p) => s + (p.deaths  || 0), 0);
+  const totalA   = players.reduce((s, p) => s + (p.assists || 0), 0);
+  const hdr = document.createElement('div');
+  hdr.className = `mt-team-hdr ${teamColor}-hdr`;
+  hdr.innerHTML =
+    `<span><span style="color:${winColor}">[ ${winLabel} ]</span>  ◈ ${teamName}</span>` +
+    `<span class="mt-hdr-right">` +
+      `<span class="mt-team-objs">` +
+        `<span class="mt-obj">🐉 ${obj.dragon    || 0}</span>` +
+        `<span class="mt-obj">👾 ${obj.baron     || 0}</span>` +
+        `<span class="mt-obj">🗼 ${obj.tower     || 0}</span>` +
+        `<span class="mt-obj">🏚 ${obj.inhibitor || 0}</span>` +
+      `</span>` +
+      `<span class="mt-team-total">${totalK} <span style="color:#475569">/</span> ` +
+        `<span style="color:#f87171">${totalD}</span> <span style="color:#475569">/</span> ${totalA}</span>` +
+    `</span>`;
+  section.appendChild(hdr);
+
+  // ── 表頭列（欄位需與玩家列固定寬度嚴格對齊）──
+  const colHdr = document.createElement('div');
+  colHdr.className = 'mt-col-hdr';
+  colHdr.innerHTML =
+    `<div class="mt-ch-identity">英雄</div>` +
+    `<div class="mt-ch-kda">KDA</div>` +
+    `<div class="mt-ch-aug"></div>` +
+    `<div class="mt-ch-dmg">輸出 <span style="color:#1e293b">|</span> 承傷</div>` +
+    `<div class="mt-ch-cs">金幣/CS</div>` +
+    `<div class="mt-ch-items">裝備</div>`;
+  section.appendChild(colHdr);
+
+  // ── 玩家列 ──
+  for (const p of players) {
+    const row = document.createElement('div');
+    row.className = `mt-row ${p.win ? 'modal-win' : 'modal-loss'}`;
+
+    const dmgPct      = maxDamage      > 0 ? ((p.damage      || 0) / maxDamage      * 100).toFixed(1) : 0;
+    const dmgTakenPct = maxDamageTaken > 0 ? ((p.damageTaken || 0) / maxDamageTaken * 100).toFixed(1) : 0;
+    const lvl        = p.champLevel || 0;
+    const minorPerks = p.minorPerks || [];
+    const validAugs  = (p.augments || []).filter(a => a && a.id > 0);
+    const validPerks = minorPerks.filter(x => x > 0);
+    const hasAugs    = validAugs.length > 0;
+    const kp         = Math.round(((p.kills || 0) + (p.assists || 0)) / Math.max(1, totalK) * 100);
+    const goldStr    = p.gold ? (p.gold / 1000).toFixed(1) + 'k' : '—';
+
+    // KDA 兩行：第一行 K/D/A (KP%)，第二行 ratio KDA
+    const kdaRatio  = p.deaths === 0
+      ? '完美 KDA'
+      : (((p.kills || 0) + (p.assists || 0)) / Math.max(1, p.deaths || 0)).toFixed(2) + ' KDA';
+    const killColor = p.deaths === 0 ? '#fbbf24' : '#cbd5e1';
+    const ratioColor= p.deaths === 0 ? '#fbbf24' : '#475569';
+
+    // 增幅裝置稀有度 → 邊框顏色
+    const _augBorder = r => r >= 2 ? '1px solid #d946ef' : r === 1 ? '1px solid #eab308' : '1px solid #9ca3af';
+
+    // 增幅優先，無增幅才顯示次級符文，完全無資料留空
+    const augColHtml = hasAugs
+      ? `<div style="display:flex;gap:3px;flex-wrap:wrap;align-items:center">` +
+        validAugs.map(a =>
+          `<img src="${IMG_PH}" class="mt-augment-icon empty" ` +
+          `data-aug-id="${a.id}" style="border:${_augBorder(a.rarity)}" ` +
+          `alt="" onerror="this.onerror=null;this.style.display='none'">`
+        ).join('') +
+        `</div>`
+      : validPerks.length > 0
+        ? `<div style="display:flex;gap:3px;flex-wrap:wrap;align-items:center">` +
+          validPerks.map(rId =>
+            `<img src="${IMG_PH}" class="mt-minor-rune empty" ` +
+            `data-perk-id="${rId}" alt="" onerror="this.onerror=null;this.style.display='none'">`
+          ).join('') +
+          `</div>`
+        : '';
+
+    const itemsHtml = (p.items || [0,0,0,0,0,0,0]).slice(0, 7).map(() =>
+      `<img src="${IMG_PH}" class="mt-item empty" alt="" onerror="${IMG_ERR}">`
+    ).join('');
+
+    row.innerHTML =
+      `<div class="mt-identity">` +
+        `<div class="mt-champ-wrap">` +
+          `<img src="${IMG_PH}" class="mt-champ empty" title="${p.championName}" onerror="${IMG_ERR}">` +
+          (lvl ? `<span class="mt-champ-level">${lvl}</span>` : '') +
+        `</div>` +
+        `<div class="mt-grid">` +
+          `<img src="${IMG_PH}" class="mt-si mt-spell empty" onerror="${IMG_ERR}">` +
+          `<img src="${IMG_PH}" class="mt-si mt-spell empty" onerror="${IMG_ERR}">` +
+          `<img src="${IMG_PH}" class="mt-si mt-rune  empty" onerror="${IMG_ERR}">` +
+          `<img src="${IMG_PH}" class="mt-si mt-rune  empty" onerror="${IMG_ERR}">` +
+        `</div>` +
+        `<div class="mt-names">` +
+          `<span class="mt-summoner" title="${p.summonerName}">${p.summonerName}</span>` +
+          `<span class="mt-champ-name">${p.championName}</span>` +
+        `</div>` +
+      `</div>` +
+      `<div class="mt-kda">` +
+        `<div class="mt-kda-nums">` +
+          `<span class="mt-k" style="color:${killColor}">${p.kills}</span>` +
+          `<span class="mt-sep">/</span>` +
+          `<span class="mt-d">${p.deaths}</span>` +
+          `<span class="mt-sep">/</span>` +
+          `<span class="mt-a">${p.assists}</span>` +
+          `<span class="mt-kp"> (${kp}%)</span>` +
+        `</div>` +
+        `<div class="mt-kda-ratio" style="color:${ratioColor}">${kdaRatio}</div>` +
+      `</div>` +
+      `<div class="mt-aug-col">${augColHtml}</div>` +
+      `<div class="mt-dmg">` +
+        `<div class="mt-dmg-half">` +
+          `<span class="mt-dmg-num">${(p.damage || 0).toLocaleString()}</span>` +
+          `<div class="mt-dmg-bar-wrap"><div class="mt-dmg-bar ${teamColor}" style="width:${dmgPct}%"></div></div>` +
+        `</div>` +
+        `<div class="mt-dmg-half">` +
+          `<span class="mt-dmg-taken-num">${(p.damageTaken || 0).toLocaleString()}</span>` +
+          `<div class="mt-dmg-bar-wrap"><div class="mt-dmg-bar-taken" style="width:${dmgTakenPct}%"></div></div>` +
+        `</div>` +
+      `</div>` +
+      `<div class="mt-cs">` +
+        `<span class="mt-gold">${goldStr}</span>` +
+        `<span>${p.minions || 0}<span class="mt-cs-lbl"> CS</span></span>` +
+      `</div>` +
+      `<div class="mt-items">${itemsHtml}</div>`;
+
+    section.appendChild(row);
+    _loadChampIcon(p.championId,                        row.querySelector('.mt-champ'));
+    _loadSpellIcons([p.spell1Id || 0, p.spell2Id || 0], row.querySelectorAll('.mt-spell'));
+    // 2x2 下排：perk0 (主系核心) + perkSubStyle (副系路徑圖示)
+    const runeEls = row.querySelectorAll('.mt-rune');
+    _loadRuneIcons([p.perk0 || 0], runeEls);
+    _loadPerkStyleIcon(p.perkSubStyle || 0, runeEls[1]);
+    // 增幅裝置優先；無增幅才載入次級符文
+    if (hasAugs) {
+      _loadAugmentIcons(validAugs.map(a => a.id), row.querySelectorAll('.mt-augment-icon'));
+    } else {
+      const minorRunes = row.querySelectorAll('.mt-minor-rune');
+      if (minorRunes.length > 0) _loadRuneIcons(validPerks, minorRunes);
+    }
+    _loadItemIcons(p.items || [],                        row.querySelectorAll('.mt-item'));
+  }
 }
 
 // ── 自動接受開關 ────────────────────────────────────────────────────────
@@ -293,23 +742,28 @@ function toggleAutoAccept() {
     lbl.textContent = '[ 自動接受對局 ]';
     lbl.style       = '';
     ind.className   = 'w-3 h-3 border-2 border-slate-700 bg-transparent transition-all duration-300 shrink-0';
-    desc.innerHTML  =
-      '偵測到 <span style="color:#475569">InProgress</span> 配對狀態時自動接受。';
+    desc.innerHTML  = '偵測到 <span style="color:#475569">InProgress</span> 配對狀態時自動接受。';
   }
 
   eel.set_auto_accept(autoAcceptEnabled);
+}
+
+// ── 重整戰績（強制回到第 1 頁並向 LCU 重新拉取）──────────────────────────
+function refreshMatchHistory() {
+  currentPage = 1;
+  append_log('REFRESH >> 強制重新拉取最新戰績 (P.1)...');
+  loadMatchHistory();
 }
 
 // ── 重新連線 ────────────────────────────────────────────────────────────
 async function doReconnect() {
   document.getElementById('summoner-name').innerHTML =
     '<span class="placeholder-block">████████████</span><span class="blink text-cyan-700">▮</span>';
-  document.getElementById('summoner-level').textContent = '---';
-  document.getElementById('lcu-port').textContent        = '---';
+  document.getElementById('summoner-level').textContent    = '---';
+  document.getElementById('lcu-port').textContent          = '---';
   document.getElementById('lcu-port-settings').textContent = '---';
-  document.getElementById('level-bar').style.width       = '0%';
-  document.getElementById('avatar-img').src =
-    "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E";
+  document.getElementById('level-bar').style.width         = '0%';
+  document.getElementById('avatar-img').src = IMG_PH;
 
   const st = document.getElementById('status-text');
   st.textContent = '重新連線中...';
@@ -317,6 +771,7 @@ async function doReconnect() {
 
   const data = await eel.reconnect()();
   updateUI(data);
+  if (data && data.ok) await _loadChampionList();
 }
 
 // ── 初始化 ─────────────────────────────────────────────────────────────
@@ -340,6 +795,7 @@ window.addEventListener('load', async () => {
   try {
     const data = await eel.initialize()();
     updateUI(data);
+    if (data && data.ok) await _loadChampionList();
   } catch (err) {
     append_log(`JS_ERR >> ${err}`, true);
   }

@@ -154,8 +154,8 @@ body, input, button, textarea {
 /* Champion images in match cards */
 .champ-img {
   display: block;
-  width: 36px;
-  height: 36px;
+  width: 48px;
+  height: 48px;
   background: #0a1628;
   border: 1px solid rgba(6,182,212,0.3);
   flex-shrink: 0;
@@ -186,6 +186,31 @@ body, input, button, textarea {
   animation: accept-flash 0.6s ease-out forwards;
 }
 
+/* ── 查無紀錄 / 抵達底部 提示 ─────────────────────────────────────── */
+.no-more-records {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 32px 16px;
+  font-size: 10px;
+  color: #334155;
+  letter-spacing: .18em;
+  text-align: center;
+}
+.no-more-bracket {
+  color: #0e7490;
+  text-shadow: 0 0 8px rgba(6,182,212,0.4);
+  letter-spacing: .25em;
+}
+.no-more-hint {
+  font-size: 9px;
+  color: #1e293b;
+  letter-spacing: .12em;
+  margin-top: 2px;
+}
+
 /* ── Match list header row ────────────────────────────────────────── */
 .match-header {
   display: flex;
@@ -202,37 +227,161 @@ body, input, button, textarea {
 /* ── Match cards ──────────────────────────────────────────────────── */
 .match-card {
   display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 7px 16px;
+  align-items: center;
+  gap: 0;
+  padding: 8px 16px;
   border-bottom: 1px solid #080f1a;
   border-left: 2px solid transparent;
   transition: background .12s;
-}
-.match-card:hover  { background: rgba(6,182,212,0.025); }
-.match-card.win    { border-left-color: rgba(74,222,128,0.35); }
-.match-card.loss   { border-left-color: rgba(239,68,68,0.35); }
-
-/* Champion image — slight top offset so it aligns with first row text */
-.champ-img { margin-top: 2px; }
-
-/* Two-row card body */
-.card-content {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
   min-width: 0;
 }
-.card-row {
+.match-card:hover  { filter: brightness(1.08); }
+.match-card.win  {
+  background: rgba(8,47,73,0.30);
+  border-left: 4px solid rgb(6,182,212);
+}
+.match-card.loss {
+  background: rgba(69,10,10,0.30);
+  border-left: 4px solid rgb(239,68,68);
+}
+
+/* ── Match card 三欄 Flexbox 佈局 ─────────────────────────────────── */
+.mc-left {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 10px;
+  justify-content: flex-start;
+  gap: 4px;
+  max-width: 340px;
+}
+.mc-mid {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  min-width: 100px;
+}
+.mc-right {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+.mc-spells {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex-shrink: 0;
+}
+.mc-name {
+  display: flex;
+  flex-direction: column;
+  min-width: 80px;
+  max-width: 180px;
+  overflow: hidden;
+}
+.mc-items { display: flex; gap: 2px; }
+.mc-meta  { display: flex; align-items: center; gap: 8px; }
+.kda-ratio { font-size: 9px; color: #334155; margin-top: 2px; }
+
+/* Summoner spell icons */
+.spell-icon {
+  display: block;
+  width: 22px;
+  height: 22px;
+  background: #0a1628;
+  border: 1px solid rgba(6,182,212,0.15);
+  flex-shrink: 0;
+  object-fit: cover;
+}
+.spell-icon.empty { opacity: 0.12; }
+
+/* 外層卡片符文/增幅包裝 */
+.mc-perk-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  width: 62px;
+  align-content: flex-start;
+  flex-shrink: 0;
+}
+.mc-perk-img {
+  display: block;
+  width: 18px;
+  height: 18px;
+  object-fit: cover;
+  border-radius: 3px;
+  flex-shrink: 0;
+  border: 1px solid rgba(6,182,212,0.1);
+}
+.mc-perk-img.empty { opacity: 0.20; }
+
+/* Rune micro grid (保留供舊版備用) */
+.rune-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 20px);
+  gap: 2px;
+  align-content: start;
+}
+.rune-icon {
+  display: block;
+  width: 20px;
+  height: 20px;
+  background: #060d1a;
+  border: 1px solid rgba(6,182,212,0.1);
+  object-fit: cover;
+  cursor: default;
+  border-radius: 2px;
+}
+/* empty = 灰色佔位框 (可見) */
+.rune-icon.empty    { opacity: 0.30; background: #0d1b30; }
+/* onerror 觸發時的降級樣式 */
+.rune-icon.img-err  { background: #1a2744 !important; opacity: 0.45 !important; border-color: rgba(100,116,139,0.25) !important; }
+/* Stat shards get a slightly different tint */
+.rune-icon.stat-icon  { border-color: rgba(148,163,184,0.12); }
+/* 競技場增益圖示：金色邊框以示區別 */
+.rune-icon.augment-icon { border-color: rgba(251,191,36,0.35); border-radius: 3px; }
+/* Separator row between perks and stat shards */
+.rune-grid-sep {
+  grid-column: span 3;
+  height: 1px;
+  background: rgba(6,182,212,0.08);
+  margin: 1px 0;
+}
+
+/* Damage value */
+.damage-val {
+  font-size: 10px;
+  color: #b45309;
+  white-space: nowrap;
 }
 
 /* Champion name + game mode */
 .champ-name { font-size:12px; color:#94a3b8; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.game-mode  { font-size:10px; color:#1e293b; }
+.game-mode  { font-size:10px; color:#1e293b; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+/* ── 自動選角英雄 ID 輸入框 ──────────────────────────────────────────── */
+.ap-input {
+  background: #060d1a;
+  border: 1px solid rgba(6,182,212,0.2);
+  color: #94a3b8;
+  font-family: 'Share Tech Mono', 'Consolas', monospace;
+  font-size: 10px;
+  padding: 3px 8px;
+  width: 150px;
+  outline: none;
+  transition: border-color .15s, color .15s;
+  -moz-appearance: textfield;
+}
+.ap-input:focus {
+  border-color: rgba(6,182,212,0.5);
+  color: #a5f3fc;
+}
+.ap-input::placeholder { color: #1e293b; }
+.ap-input::-webkit-outer-spin-button,
+.ap-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 
 /* KDA block */
 .kda-block {
@@ -245,12 +394,7 @@ body, input, button, textarea {
 .kda-block .sep               { font-size:12px; color:#1e293b; padding:0 3px; }
 .kda-block .ratio             { font-size:10px; color:#334155; margin-left:8px; }
 
-/* Item icons row */
-.items-row {
-  display: flex;
-  align-items: center;
-  gap: 3px;
-}
+/* Item icons */
 .item-icon {
   display: block;
   width: 22px;
@@ -294,3 +438,308 @@ body, input, button, textarea {
 .custom-scroll::-webkit-scrollbar-track { background:transparent; }
 .custom-scroll::-webkit-scrollbar-thumb { background:rgba(6,182,212,0.2); }
 .custom-scroll::-webkit-scrollbar-thumb:hover { background:rgba(6,182,212,0.4); }
+
+/* ── 英雄選擇器 ───────────────────────────────────────────────────── */
+.champ-picker-wrap {
+  position: relative;
+  display: inline-block;
+}
+.champ-picker-dropdown {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  z-index: 5000;
+  min-width: max(100%, 200px);
+  max-height: 220px;
+  overflow-y: auto;
+  background: #020a14;
+  border: 1px solid rgba(6,182,212,0.35);
+  box-shadow: 0 8px 24px rgba(6,182,212,0.12);
+}
+.champ-picker-dropdown.hidden { display: none; }
+.champ-picker-item {
+  padding: 5px 10px;
+  font-size: 10px;
+  color: #64748b;
+  cursor: pointer;
+  letter-spacing: .05em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background .08s, color .08s;
+}
+.champ-picker-item:hover   { background: rgba(6,182,212,0.1);  color: #a5f3fc; }
+.champ-picker-item.selected{ background: rgba(6,182,212,0.15); color: #22d3ee; }
+.champ-picker-more {
+  padding: 5px 10px;
+  font-size: 9px;
+  color: #1e293b;
+  letter-spacing: .06em;
+  border-top: 1px solid rgba(6,182,212,0.08);
+}
+
+/* ── 對局詳細 Modal ───────────────────────────────────────────────── */
+@keyframes modal-in { from { opacity:0; transform:scale(.97) translateY(6px); } to { opacity:1; transform:scale(1) translateY(0); } }
+
+.game-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(2,6,23,0.90);
+  backdrop-filter: blur(3px);
+}
+.game-modal-panel {
+  position: relative;
+  z-index: 1;
+  width: min(1120px, 95vw);
+  max-height: 86vh;
+  background: #020617;
+  border: 1px solid rgba(6,182,212,0.35);
+  box-shadow: 0 0 50px rgba(6,182,212,0.12), 0 0 100px rgba(6,182,212,0.04);
+  display: flex;
+  flex-direction: column;
+  animation: modal-in .18s ease-out;
+}
+.game-modal-hdr {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 9px 18px;
+  border-bottom: 1px solid rgba(6,182,212,0.18);
+  background: #020a14;
+  font-size: 11px;
+  letter-spacing: .18em;
+  flex-shrink: 0;
+}
+.game-modal-close {
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid rgba(6,182,212,0.2);
+  color: #475569;
+  font-family: inherit;
+  font-size: 10px;
+  padding: 2px 12px;
+  cursor: pointer;
+  letter-spacing: .1em;
+  transition: border-color .15s, color .15s;
+}
+.game-modal-close:hover { border-color: rgba(239,68,68,0.5); color: #f87171; }
+/* ── Modal 表格：上下堆疊 (V20) ──────────────────────────────────── */
+.game-modal-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+.game-modal-panel {
+  width: min(960px, 96vw);
+}
+.mt-section { display: block; }
+.mt-separator { height: 1px; flex-shrink: 0; background: rgba(6,182,212,0.12); }
+.mt-team-hdr {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 14px;
+  font-size: 10px;
+  letter-spacing: .22em;
+  border-bottom: 1px solid rgba(6,182,212,0.08);
+}
+.mt-team-total { font-size: 11px; letter-spacing: .05em; color: #94a3b8; }
+.mt-hdr-right  { display: flex; align-items: center; gap: 14px; }
+.mt-team-objs  { display: flex; align-items: center; gap: 8px; }
+.mt-obj        { font-size: 10px; color: #475569; letter-spacing: 0; white-space: nowrap; }
+.blue-hdr { background: rgba(6,182,212,0.05); }
+.red-hdr  { background: rgba(239,68,68,0.05); }
+
+/* 表頭列 */
+.mt-col-hdr {
+  display: flex;
+  align-items: center;
+  padding: 3px 12px;
+  font-size: 9px;
+  color: #334155;
+  letter-spacing: .06em;
+  border-bottom: 1px solid #080f1a;
+  background: #020814;
+}
+.mt-ch-identity { width: 225px; flex-shrink: 0; }
+.mt-ch-kda      { width: 90px;  flex-shrink: 0; text-align: center; }
+.mt-ch-aug      { width: 120px; flex-shrink: 0; }
+.mt-ch-dmg      { width: 210px; flex-shrink: 0; text-align: center; }
+.mt-ch-cs       { width: 58px;  flex-shrink: 0; text-align: center; }
+.mt-ch-items    { flex: 1; }
+
+/* 玩家列 */
+.mt-row {
+  display: flex;
+  align-items: center;
+  padding: 5px 12px;
+  border-bottom: 1px solid #080f1a;
+  border-left: 3px solid transparent;
+  transition: filter .1s;
+}
+.mt-row:hover { filter: brightness(1.13); }
+.modal-win  { border-left-color: rgba(6,182,212,0.45); background: rgba(8,47,73,0.18); }
+.modal-loss { border-left-color: rgba(239,68,68,0.35); background: rgba(69,10,10,0.18); }
+
+/* Col 1：英雄身分 (固定 225px) */
+.mt-identity {
+  width: 225px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+.mt-champ-wrap { position: relative; flex-shrink: 0; }
+.mt-champ {
+  width: 36px; height: 36px;
+  border: 1px solid rgba(6,182,212,0.2);
+  background: #0a1628;
+  object-fit: cover;
+  display: block;
+}
+.mt-champ-level {
+  position: absolute;
+  bottom: -3px; right: -3px;
+  width: 15px; height: 15px;
+  background: #0f172a;
+  border: 1px solid rgba(6,182,212,0.35);
+  border-radius: 50%;
+  font-size: 8px;
+  color: #e2e8f0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+.mt-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px;
+  flex-shrink: 0;
+}
+.mt-si {
+  display: block;
+  width: 17px; height: 17px;
+  background: #060d1a;
+  border: 1px solid rgba(6,182,212,0.12);
+  object-fit: cover;
+}
+.mt-si.empty { opacity: 0.15; }
+.mt-rune { border-radius: 50%; }
+.mt-names {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+.mt-summoner   { font-size: 11px; color: #94a3b8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mt-champ-name { font-size:  9px; color: #334155; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Col 2：KDA 兩行 (固定 90px) */
+.mt-kda {
+  width: 90px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+}
+.mt-kda-nums  { display: flex; align-items: center; font-size: 10px; flex-wrap: wrap; justify-content: center; }
+.mt-kda-ratio { font-size: 9px; color: #475569; letter-spacing: .02em; }
+.mt-kp        { font-size: 9px; color: #475569; }
+.mt-k, .mt-a { color: #cbd5e1; min-width: 12px; text-align: right; }
+.mt-d         { color: #f87171; min-width: 12px; text-align: right; }
+.mt-sep       { color: #1e293b; padding: 0 1px; }
+
+/* Col 3：次級符文 (固定 120px，動態渲染，無固定佔位框) */
+.mt-aug-col  { width: 120px; flex-shrink: 0; display: flex; align-items: center; }
+.mt-minor-rune {
+  width: 18px; height: 18px;
+  object-fit: cover;
+  display: block;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+.mt-minor-rune.empty { opacity: 0.20; }
+.mt-augment-icon {
+  width: 24px; height: 24px;
+  object-fit: cover;
+  display: block;
+  border-radius: 4px;
+  border: 1px solid rgba(251,191,36,0.25);
+  flex-shrink: 0;
+}
+.mt-augment-icon.empty { opacity: 0.20; }
+
+/* Col 4：傷害雙欄 (固定 210px，左輸出右承傷) */
+.mt-dmg {
+  width: 210px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-right: 4px;
+}
+.mt-dmg-half {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+.mt-dmg-num       { font-size: 10px; color: #92400e; white-space: nowrap; }
+.mt-dmg-taken-num { font-size: 10px; color: #78716c; white-space: nowrap; }
+.mt-dmg-bar-wrap  { width: 100%; height: 6px; background: #0d1b30; border-radius: 9999px; overflow: hidden; }
+.mt-dmg-bar       { height: 100%; border-radius: 9999px; transition: width .5s ease-out; }
+.mt-dmg-bar.blue  { background: #06b6d4; box-shadow: 0 0 4px rgba(6,182,212,0.5); }
+.mt-dmg-bar.red   { background: #ef4444; box-shadow: 0 0 4px rgba(239,68,68,0.4); }
+.mt-dmg-bar-taken { height: 100%; border-radius: 9999px; transition: width .5s ease-out; background: #78716c; }
+
+/* Col 5：金幣 + 補兵 (固定 58px) */
+.mt-cs {
+  width: 58px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  font-size: 10px;
+  color: #64748b;
+}
+.mt-gold   { font-size: 10px; color: #a16207; white-space: nowrap; }
+.mt-cs-lbl { font-size: 9px; color: #334155; }
+
+/* Col 5：裝備 7 格 (固定 180px) */
+.mt-items { display: flex; gap: 2px; flex-shrink: 0; }
+.mt-item {
+  display: block;
+  width: 24px; height: 24px;
+  border: 1px solid rgba(6,182,212,0.15);
+  background: #070f1a;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+.mt-item.empty { opacity: 0.10; }
+.modal-loading {
+  padding: 28px;
+  text-align: center;
+  font-size: 10px;
+  color: #1e3a52;
+  letter-spacing: .15em;
+  animation: blink 1s step-end infinite;
+}
+.game-modal-ftr {
+  padding: 6px 18px;
+  border-top: 1px solid rgba(6,182,212,0.08);
+  background: #020a14;
+  flex-shrink: 0;
+  text-align: center;
+  font-size: 9px;
+  color: #1e293b;
+  letter-spacing: .12em;
+}
