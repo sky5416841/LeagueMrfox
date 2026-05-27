@@ -5,7 +5,7 @@ REM  執行前請確認：pip install pyinstaller eel pywebview
 REM  並將 app.ico 放在專案根目錄與 web/ 資料夾
 REM ══════════════════════════════════════════════════════════════════
 
-set PYTHON="C:\Users\user\AppData\Local\Programs\Python\Python311\python.exe"
+set PYTHON=python
 
 echo [1/2] 清除舊的建置產物...
 if exist dist         rmdir /s /q dist
