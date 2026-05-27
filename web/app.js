@@ -183,6 +183,20 @@ function _renderLiveCard(p) {
   const wr       = p.winRate || 0;
   const hasChamp = p.championId && p.championId > 0;
 
+  // 段位資訊
+  const isUnranked = !p.tier || ['UNRANKED', 'NONE', 'NA', ''].includes(p.tier);
+  const rankWrColor = (p.rankWinRate || 0) >= 60 ? '#4ade80'
+    : (p.rankWinRate || 0) >= 50 ? '#a3e635'
+    : (p.rankWinRate || 0) >= 40 ? '#fb923c' : '#f87171';
+  const rankHtml = isUnranked
+    ? '<div class="live-rank-row live-rank-unranked">未排位</div>'
+    : `<div class="live-rank-row">
+         <span class="live-rank-text">${p.tierText || ''}</span>
+         <span class="live-rank-sep">·</span>
+         <span class="live-rank-wr" style="color:${rankWrColor}">${p.rankWinRate || 0}%</span>
+         <span class="live-rank-lp">${p.lp || 0} LP</span>
+       </div>`;
+
   // 標籤
   let badge = '';
   if (isSelf) {
@@ -239,6 +253,7 @@ function _renderLiveCard(p) {
         ${iconHtml}
         <div class="flex-1 min-w-0">
           <div class="flex items-center gap-2 flex-wrap">${nameHtml}${champTag}${badge}</div>
+          ${rankHtml}
           ${statsHtml}
         </div>
       </div>

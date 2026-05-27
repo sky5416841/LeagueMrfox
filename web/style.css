@@ -921,3 +921,18 @@ body, input, button, textarea {
 }
 .ingame-team-hdr-blue { color: #67e8f9; }
 .ingame-team-hdr-red  { color: #fca5a5; }
+
+/* ── Live 段位顯示列 ─────────────────────────────────────────────── */
+.live-rank-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  margin-top: 2px;
+  margin-bottom: 1px;
+}
+.live-rank-text     { color: #94a3b8; letter-spacing: .04em; }
+.live-rank-sep      { color: #334155; }
+.live-rank-wr       { letter-spacing: .02em; }
+.live-rank-lp       { color: #475569; font-size: 9px; }
+.live-rank-unranked { color: #1e3a52; font-size: 9px; letter-spacing: .08em; }
