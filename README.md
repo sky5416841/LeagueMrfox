@@ -36,7 +36,7 @@
 ### 2.2 從原始碼啟動
 
 ```bash
-pip install eel requests psutil websockets urllib3
+pip install eel requests psutil websockets urllib3 pywebview
 python main.py
 ```
 
@@ -50,7 +50,7 @@ python main.py
 2. 執行打包腳本：
 
 ```bash
-pip install pyinstaller
+pip install pyinstaller pywebview
 build.bat
 ```
 
@@ -60,9 +60,8 @@ build.bat
 
 ## 4. 系統需求
 
-- Windows 10 / 11
+- Windows 10 / 11（內建 WebView2，無需額外安裝瀏覽器）
 - 英雄聯盟客戶端（執行中）
-- Microsoft Edge 或 Google Chrome
 
 ---
 
@@ -70,6 +69,7 @@ build.bat
 
 - **後端**：Python 3.11 + [Eel](https://github.com/python-eel/Eel)
 - **前端**：Vanilla JS + Tailwind CSS
+- **視窗**：[pywebview](https://pywebview.flowrl.com/)（Windows WebView2，原生視窗、無瀏覽器 UI）
 - **通訊**：LCU API（本機 HTTPS + WebSocket 事件監聽）
 - **打包**：PyInstaller（`--onefile --noconsole`）
 
