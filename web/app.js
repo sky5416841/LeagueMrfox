@@ -286,19 +286,21 @@ function _renderRank(type, rank) {
 async function loadMatchHistory() {
   const list = document.getElementById('match-list');
 
+  const startIndex  = (currentPage - 1) * itemsPerPage;
+  const targetCount = itemsPerPage;
+
   list.innerHTML =
-    '<div class="py-6 text-center text-[10px] text-slate-700 tracking-widest">' +
-    '<span class="placeholder-block">██████████████████████</span>' +
-    '<span class="blink text-cyan-800 ml-1">▮</span></div>';
+    `<div class="py-6 text-center text-[10px] text-slate-700 tracking-widest">` +
+    `<span class="placeholder-block">██████████████████████</span>` +
+    `<span class="blink text-cyan-800 ml-1">▮</span>` +
+    `<div class="mt-1 text-slate-600">// 載入第 ${currentPage} 頁，共 ${targetCount} 筆 (offset=${startIndex})...</div></div>`;
 
   _updatePaginationUI(true);
-
-  const begIndex = (currentPage - 1) * itemsPerPage;
-  const endIndex = currentPage * itemsPerPage;
+  append_log(`MATCH_HISTORY_REQ >> 第 ${currentPage} 頁，startIndex=${startIndex} targetCount=${targetCount}`);
 
   let matches = [];
   try {
-    matches = await eel.get_match_history(begIndex, endIndex)();
+    matches = await eel.get_match_history(startIndex, targetCount)();
   } catch (err) {
     append_log(`MATCH_ERR >> 後端通訊失敗: ${err}`, true);
     matches = [];
@@ -307,6 +309,7 @@ async function loadMatchHistory() {
   list.innerHTML = '';
   _lastMatchCount = Array.isArray(matches) ? matches.length : 0;
   _updatePaginationUI(false);
+  append_log(`MATCH_HISTORY >> loaded ${_lastMatchCount} 筆對局 (第 ${currentPage} 頁，每頁 ${itemsPerPage} 筆)`);
 
   // ── 前端備援符文解析 ──────────────────────────────────────────────────
   // 若後端三格式解析仍回傳全零（部分版本 LCU 資料結構不同），
@@ -448,7 +451,8 @@ const queueMap = {
 // ── 戰績卡片 ────────────────────────────────────────────────────────────
 function _buildMatchCard(m) {
   const card = document.createElement('div');
-  card.className = `match-card ${m.win ? 'win' : 'loss'}`;
+  const gr = m.gameResult || (m.win ? 'WIN' : 'LOSS');
+  card.className = `match-card ${gr === 'REMAKE' ? 'remake' : m.win ? 'win' : 'loss'}`;
 
   // 有 gameId 則支援點擊展開 10 人詳細
   if (m.gameId) {
@@ -515,7 +519,16 @@ function _buildMatchCard(m) {
       <div class="mc-items">${itemsHtml}</div>
       <div class="mc-meta">
         <span class="duration">${mins}:${secs}</span>
-        <div class="result ${m.win ? 'win-badge' : 'loss-badge'}">${m.win ? '[ 勝利 ]' : '[ 失敗 ]'}</div>
+        ${gr === 'REMAKE'
+            ? '<div class="result remake-badge">[ 重開 ]</div>'
+            : gr === 'SURRENDER_WIN'
+              ? '<div class="result win-badge surrender-badge">[ 投降勝 ]</div>'
+              : gr === 'SURRENDER_LOSS'
+                ? '<div class="result loss-badge surrender-badge">[ 投降 ]</div>'
+                : m.win
+                  ? '<div class="result win-badge">[ 勝利 ]</div>'
+                  : '<div class="result loss-badge">[ 失敗 ]</div>'
+        }
       </div>
     </div>`;
 

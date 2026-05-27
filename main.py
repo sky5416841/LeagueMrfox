@@ -10,6 +10,7 @@ import threading
 
 import eel
 import urllib3
+import requests
 import websockets
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -42,6 +43,33 @@ _auto_pick_champ_id= 0
 _last_pick_action_id = -1  # 防止對同一個 action 重複秒選
 _champ_valid_ids: set[int] = set()  # 僅含有 roles 的正常可玩英雄，過濾 NPC
 
+# 本地戰績快取路徑（data/ 已在 .gitignore，個人數據不上傳）
+_MATCH_CACHE_FILE = os.path.join(os.path.dirname(__file__), "data", "match_history_cache.json")
+
+# SGP 各區域 matchHistory base URL（來源：LeagueAkari/resources/builtin-config/sgp/league-servers.json）
+_SGP_MATCH_HISTORY_URLS: dict[str, str] = {
+    "TW2":  "https://apse1-red.pp.sgp.pvp.net",
+    "SG2":  "https://apse1-red.pp.sgp.pvp.net",
+    "PH2":  "https://apse1-red.pp.sgp.pvp.net",
+    "VN2":  "https://apse1-red.pp.sgp.pvp.net",
+    "TH2":  "https://apse1-red.pp.sgp.pvp.net",
+    "OC1":  "https://apse1-red.pp.sgp.pvp.net",
+    "KR":   "https://apne1-red.pp.sgp.pvp.net",
+    "JP1":  "https://apne1-red.pp.sgp.pvp.net",
+    "NA1":  "https://usw2-red.pp.sgp.pvp.net",
+    "LA1":  "https://usw2-red.pp.sgp.pvp.net",
+    "LA2":  "https://usw2-red.pp.sgp.pvp.net",
+    "BR1":  "https://usw2-red.pp.sgp.pvp.net",
+    "EUW1": "https://euc1-red.pp.sgp.pvp.net",
+    "EUNE1":"https://euc1-red.pp.sgp.pvp.net",
+    "RU":   "https://euc1-red.pp.sgp.pvp.net",
+    "TR1":  "https://euc1-red.pp.sgp.pvp.net",
+}
+
+# 在 initialize() 時填入
+_platform_id       = ''   # 例如 "TW2"
+_entitlement_token = ''   # Riot Entitlements JWT（SGP 認證用）
+
 # ── Helper ─────────────────────────────────────────────────────────────
 def _log(msg: str):
     try:
@@ -49,6 +77,29 @@ def _log(msg: str):
     except Exception:
         print(f"[LOG] {msg}")
 
+
+def _load_match_cache() -> dict:
+    """從磁碟讀取本地戰績快取，key 為 str(gameId)。帳號不符時自動清空。"""
+    try:
+        if not os.path.exists(_MATCH_CACHE_FILE):
+            return {}
+        with open(_MATCH_CACHE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if data.get("puuid") != _puuid:   # 切換帳號時清空舊快取
+            return {}
+        return data.get("games", {})
+    except Exception:
+        return {}
+
+
+def _save_match_cache(games_dict: dict):
+    """將合併後的戰績快取寫回磁碟。"""
+    try:
+        os.makedirs(os.path.dirname(_MATCH_CACHE_FILE), exist_ok=True)
+        with open(_MATCH_CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump({"puuid": _puuid, "games": games_dict}, f, ensure_ascii=False)
+    except Exception as e:
+        _log(f"CACHE_WRITE_ERR >> {e}")
 
 
 def _load_champ_summary():
@@ -245,7 +296,7 @@ def _load_rank_emblem_cache():
 # ── Exposed to JS ──────────────────────────────────────────────────────
 @eel.expose
 def initialize():
-    global _client, _puuid, _account_id
+    global _client, _puuid, _account_id, _platform_id, _entitlement_token
     _log("SYS >> Initializing connection to League Client...")
     try:
         _client     = LCUClient()
@@ -259,6 +310,34 @@ def initialize():
         icon_id     = s.get("profileIconId", 0)
         _puuid      = s.get("puuid", "")
         _account_id = s.get("accountId", 0)
+
+        # ── SGP 認證資訊（用於突破 LCU 20 筆戰績限制）────────────────
+        # platformId 從 /lol-login/v1/session 的 idToken JWT payload 解碼
+        # Riot JWT claims 裡的 cpid 欄位即為 "TW2"、"NA1" 等格式
+        _platform_id = ""
+        try:
+            login_data = _client.get("/lol-login/v1/session")
+            id_token   = login_data.get("idToken", "")
+            if id_token:
+                parts = id_token.split(".")
+                if len(parts) >= 2:
+                    # base64url 解碼 JWT payload（補齊 padding）
+                    padded = parts[1] + "=" * (-len(parts[1]) % 4)
+                    claims = json.loads(base64.urlsafe_b64decode(padded))
+                    # cpid 藏在 lol[0].cpid（不是頂層欄位）
+                    lol_list     = claims.get("lol") or claims.get("lol_region") or []
+                    _platform_id = (lol_list[0].get("cpid") or
+                                    lol_list[0].get("pid")  or "") if lol_list else ""
+        except Exception as ep_err:
+            _log(f"SGP_REGION_ERR >> {ep_err}")
+        _log(f"SGP_REGION >> platformId={_platform_id!r}")
+
+        try:
+            ent = _client.get("/entitlements/v1/token")
+            _entitlement_token = ent.get("accessToken", "")
+            _log(f"SGP_TOKEN >> {'OK' if _entitlement_token else 'EMPTY'} (len={len(_entitlement_token)})")
+        except Exception:
+            _entitlement_token = ""
 
         _log(f"OPERATOR_PROFILE >> loaded: {full} // LVL {lvl} // ICON {icon_id}")
         _load_champ_summary()
@@ -435,171 +514,219 @@ def get_rank_info() -> dict | None:
         return None
 
 
-@eel.expose
-def get_match_history(beg_index: int = 0, end_index: int = 20) -> list:
-    """Return matches for the current summoner using dynamic pagination indices."""
-    if not _client:
-        return []
-    try:
-        _log(f"MATCH_HISTORY_REQ >> begIndex={beg_index} endIndex={end_index} (no-cache)")
-        raw   = _client.get(
-            f"/lol-match-history/v1/products/lol/current-summoner/matches"
-            f"?begIndex=0&endIndex={end_index}",
-            headers={"Cache-Control": "no-cache", "Pragma": "no-cache"},
-        )
-        games = raw.get("games", {}).get("games", [])
-        _log(f"MATCH_HISTORY_RAW >> LCU returned {len(games)} games, slicing [{beg_index}:{end_index}]")
+def _parse_one_game(game: dict, source: str) -> dict | None:
+    """解析單場遊戲資料，相容 LCU 格式（stats 巢狀）與 SGP 格式（stats 攤平）。
+    回傳解析好的 dict，找不到玩家或失敗時回傳 None。
+    """
+    _QUEUES_LOCAL = {
+        420: "排位賽", 440: "彈性排位", 450: "大亂鬥",
+        400: "一般對戰", 430: "一般對戰", 700: "衝突",
+    }
 
-        _QUEUES = {
-            420: "排位賽",
-            440: "彈性排位",
-            450: "大亂鬥",
-            400: "一般對戰",
-            430: "一般對戰",
-            700: "衝突",
-        }
+    # ── 找玩家：SGP 可直接比 puuid；LCU 需透過 participantIdentities ────
+    our_pid  = None
+    our_puuid_matched = False
 
-        results = []
-        for game in games[beg_index:end_index]:
-          try:  # ── 單場遊戲解析防崩潰 ──────────────────────────────────────
-            # Find current player's participantId
-            our_pid = None
-            for ident in game.get("participantIdentities", []):
-                p = ident.get("player", {})
-                if (_puuid      and p.get("puuid")              == _puuid) or \
-                   (_account_id and p.get("accountId")          == _account_id) or \
-                   (_account_id and p.get("currentAccountId")   == _account_id):
-                    our_pid = ident.get("participantId")
-                    break
+    # SGP / 新版 LCU：participants[].puuid 直接存在
+    for p in game.get("participants", []):
+        if p.get("puuid") == _puuid:
+            our_pid = p.get("participantId")
+            our_puuid_matched = True
+            break
 
-            if our_pid is None:
-                continue
-
-            # Extract stats for our participant
-            for p in game.get("participants", []):
-                if p.get("participantId") != our_pid:
-                    continue
-                stats    = p.get("stats", {})
-                champ_id = p.get("championId", 0)
-                q        = game.get("queueId") or game.get("gameQueueConfigId", 0)
-                mode     = game.get("gameMode", "")
-                is_arena = (mode == "KIWI")
-                _log(f"MATCH_DEBUG >> gameId={game.get('gameId')} queueId={q} mode={mode} isArena={is_arena}")
-
-                # ── 競技場模式：用 playerAugment1~6 取代符文 ──────────────
-                if is_arena:
-                    _load_augment_cache()
-                    aug_ids = [stats.get(f"playerAugment{i}", 0) for i in range(1, 7)]
-                    aug_augments = [
-                        {"id": aid, "rarity": (_augment_cache.get(aid) or {}).get("rarity", 1)}
-                        for aid in aug_ids
-                    ]
-                    aug_names = [(_augment_cache.get(aid) or {}).get("name", "") for aid in aug_ids]
-                    _log(f"AUGMENT_IDS >> {aug_ids}")
-                    results.append({
-                        "gameId":           game.get("gameId", 0),
-                        "championId":       champ_id,
-                        "championName":     _get_champ_name(champ_id),
-                        "kills":            stats.get("kills",   0),
-                        "deaths":           stats.get("deaths",  0),
-                        "assists":          stats.get("assists", 0),
-                        "win":              stats.get("win",  False),
-                        "duration":         game.get("gameDuration", 0),
-                        "queueId":          q,
-                        "queue":            _QUEUES.get(q, "競技場"),
-                        "items":            [stats.get(f"item{i}", 0) for i in range(6)],
-                        "spell1Id":         p.get("spell1Id", 0),
-                        "spell2Id":         p.get("spell2Id", 0),
-                        "damage":           stats.get("totalDamageDealtToChampions", 0),
-                        "augments":         aug_augments,  # 帶稀有度的增幅裝置
-                        "runes":            aug_ids,
-                        "statPerks":        [],
-                        "runeTooltips":     aug_names,
-                        "statPerkTooltips": [],
-                        "isArena":          True,
-                    })
-                    break
-
-                # ── 一般模式：傳統符文解析（三種格式容錯）────────────────
-                # 格式 A: stats.perk0~5 (舊版 LCU)
-                rune_ids = [stats.get(f"perk{i}", 0) for i in range(6)]
-
-                perks_obj = p.get("perks") or stats.get("perks") or {}
-
-                # 格式 B: perks.styles[].selections[].perk (新版 LCU)
-                if not any(rune_ids) and perks_obj.get("styles"):
-                    rune_ids = []
-                    for style in perks_obj["styles"]:
-                        for sel in style.get("selections", []):
-                            rune_ids.append(sel.get("perk", 0))
-                    rune_ids = (rune_ids + [0] * 6)[:6]
-
-                # 格式 C: perks.perkIds[0:6] (部分版本)
-                if not any(rune_ids) and perks_obj.get("perkIds"):
-                    pids     = perks_obj["perkIds"]
-                    rune_ids = (list(pids[:6]) + [0] * 6)[:6]
-
-                _log(f"PERK_IDS >> {rune_ids}")
-
-                # ── 屬性碎片 ID（三種格式容錯）─────────────────────────────
-                # 格式 A: stats.statPerk0~2
-                stat_ids = [stats.get(f"statPerk{i}", 0) for i in range(3)]
-
-                # 格式 B: perks.statPerks {offense, flex, defense}
-                if not any(stat_ids):
-                    sp = perks_obj.get("statPerks") or {}
-                    if isinstance(sp, dict):
-                        stat_ids = [
-                            sp.get("offense", 0),
-                            sp.get("flex",    0),
-                            sp.get("defense", 0),
-                        ]
-
-                # 格式 C: perks.perkIds[6:9]
-                if not any(stat_ids) and perks_obj.get("perkIds"):
-                    pids     = perks_obj["perkIds"]
-                    stat_ids = (list(pids[6:9]) + [0] * 3)[:3]
-
-                # ── 符文 Tooltip（lazy load perk cache）
-                _load_perk_cache()
-                rune_tooltips = [_perk_tooltip(pid) for pid in rune_ids]
-                stat_tooltips = [_perk_tooltip(pid) for pid in stat_ids]
-
-                results.append({
-                    "gameId":           game.get("gameId", 0),
-                    "championId":       champ_id,
-                    "championName":     _get_champ_name(champ_id),
-                    "kills":            stats.get("kills",   0),
-                    "deaths":           stats.get("deaths",  0),
-                    "assists":          stats.get("assists", 0),
-                    "win":              stats.get("win",  False),
-                    "duration":         game.get("gameDuration", 0),
-                    "queueId":          q,
-                    "queue":            _QUEUES.get(q, "一般對戰"),
-                    "items":            [stats.get(f"item{i}", 0) for i in range(6)],
-                    "spell1Id":         p.get("spell1Id", 0),
-                    "spell2Id":         p.get("spell2Id", 0),
-                    "damage":           stats.get("totalDamageDealtToChampions", 0),
-                    "runes":            rune_ids,
-                    "statPerks":        stat_ids,
-                    "runeTooltips":     rune_tooltips,
-                    "statPerkTooltips": stat_tooltips,
-                    "perksRaw": {
-                        "styles":    perks_obj.get("styles")    or [],
-                        "statPerks": perks_obj.get("statPerks") or {},
-                        "perkIds":   perks_obj.get("perkIds")   or [],
-                    },
-                    "isArena":          False,
-                })
+    # 舊版 LCU：透過 participantIdentities 查 participantId
+    if not our_puuid_matched:
+        for ident in game.get("participantIdentities", []):
+            pl = ident.get("player", {})
+            if (_puuid      and pl.get("puuid")            == _puuid) or \
+               (_account_id and pl.get("accountId")        == _account_id) or \
+               (_account_id and pl.get("currentAccountId") == _account_id):
+                our_pid = ident.get("participantId")
                 break
 
-          except Exception as game_err:
-            # 單場解析失敗：跳過這場，絕不讓整個函數崩潰
-            _log(f"GAME_PARSE_ERR >> gameId={game.get('gameId','?')} >> {game_err}")
+    if our_pid is None and not our_puuid_matched:
+        return None
+
+    for p in game.get("participants", []):
+        # 用 puuid 或 participantId 定位自己
+        matched = (p.get("puuid") == _puuid) if our_puuid_matched \
+                  else (p.get("participantId") == our_pid)
+        if not matched:
             continue
 
-        _log(f"MATCH_HISTORY >> loaded {len(results)} 場對局")
-        return results
+        # SGP 格式：stats 攤平在 p；LCU 格式：stats 在 p["stats"]
+        nested = p.get("stats") or {}
+        stats  = nested if (nested.get("kills") is not None or nested.get("win") is not None) else p
+
+        champ_id = p.get("championId", 0)
+        q        = game.get("queueId") or game.get("gameQueueConfigId", 0)
+        mode     = game.get("gameMode", "")
+        is_arena = (mode in ("KIWI", "CHERRY"))
+        duration = game.get("gameDuration", 0)
+
+        win          = stats.get("win", False)
+        is_remake    = 0 < duration < 240
+        is_surrender = bool(
+            stats.get("gameEndedInEarlySurrender") or
+            stats.get("teamEarlySurrendered")      or
+            stats.get("gameEndedInSurrender")
+        )
+        game_result = ("REMAKE" if is_remake else
+                       ("SURRENDER_WIN" if win else "SURRENDER_LOSS") if is_surrender else
+                       ("WIN" if win else "LOSS"))
+
+        base = {
+            "gameId":       game.get("gameId", 0),
+            "championId":   champ_id,
+            "championName": _get_champ_name(champ_id),
+            "kills":        stats.get("kills",   0),
+            "deaths":       stats.get("deaths",  0),
+            "assists":      stats.get("assists", 0),
+            "win":          bool(win),
+            "duration":     duration,
+            "queueId":      q,
+            "queue":        _QUEUES_LOCAL.get(q, "一般對戰"),
+            "items":        [stats.get(f"item{i}", 0) or p.get(f"item{i}", 0) for i in range(6)],
+            "spell1Id":     p.get("spell1Id", 0),
+            "spell2Id":     p.get("spell2Id", 0),
+            "damage":       stats.get("totalDamageDealtToChampions", 0) or p.get("totalDamageDealtToChampions", 0),
+            "gameResult":   game_result,
+            "isSurrender":  is_surrender,
+            "source":       source,
+        }
+
+        if is_arena:
+            _load_augment_cache()
+            aug_ids = [stats.get(f"playerAugment{i}", 0) or p.get(f"playerAugment{i}", 0) for i in range(1, 7)]
+            base.update({
+                "augments":     [{"id": aid, "rarity": (_augment_cache.get(aid) or {}).get("rarity", 1)} for aid in aug_ids],
+                "runes":        aug_ids,
+                "statPerks":    [],
+                "runeTooltips": [(_augment_cache.get(aid) or {}).get("name", "") for aid in aug_ids],
+                "statPerkTooltips": [],
+                "isArena":      True,
+                "queue":        _QUEUES_LOCAL.get(q, "競技場"),
+            })
+        else:
+            perks_obj = p.get("perks") or stats.get("perks") or {}
+            rune_ids  = [stats.get(f"perk{i}", 0) for i in range(6)]
+            if not any(rune_ids) and perks_obj.get("styles"):
+                rune_ids = []
+                for style in perks_obj["styles"]:
+                    for sel in style.get("selections", []):
+                        rune_ids.append(sel.get("perk", 0))
+                rune_ids = (rune_ids + [0] * 6)[:6]
+            if not any(rune_ids) and perks_obj.get("perkIds"):
+                rune_ids = (list(perks_obj["perkIds"][:6]) + [0] * 6)[:6]
+
+            stat_ids = [stats.get(f"statPerk{i}", 0) for i in range(3)]
+            if not any(stat_ids):
+                sp = perks_obj.get("statPerks") or {}
+                if isinstance(sp, dict):
+                    stat_ids = [sp.get("offense", 0), sp.get("flex", 0), sp.get("defense", 0)]
+            if not any(stat_ids) and perks_obj.get("perkIds"):
+                pids = perks_obj["perkIds"]
+                stat_ids = (list(pids[6:9]) + [0] * 3)[:3]
+
+            base.update({
+                "runes":            rune_ids,
+                "statPerks":        stat_ids,
+                "runeTooltips":     [_perk_tooltip(pid) for pid in rune_ids],
+                "statPerkTooltips": [_perk_tooltip(pid) for pid in stat_ids],
+                "perksRaw": {
+                    "styles":    perks_obj.get("styles")    or [],
+                    "statPerks": perks_obj.get("statPerks") or {},
+                    "perkIds":   perks_obj.get("perkIds")   or [],
+                },
+                "isArena": False,
+            })
+
+        return base
+    return None
+
+
+@eel.expose
+def get_match_history(start_index: int = 0, target_count: int = 20) -> list:
+    """優先使用 SGP API（無 20 筆限制）直接回傳 start_index~target_count 筆。
+    SGP 失敗時降級為 LCU + 本地累加快取。
+    """
+    if not _client or not _puuid:
+        return []
+    try:
+        _load_champ_summary()
+        _load_perk_cache()
+
+        # ══ 路徑 A：SGP API（無 20 筆限制，直接精確分頁）══════════════
+        sgp_base = _SGP_MATCH_HISTORY_URLS.get(_platform_id.upper()) if _platform_id else None
+
+        if sgp_base and _entitlement_token:
+            url = f"{sgp_base}/match-history-query/v1/products/lol/player/{_puuid}/SUMMARY"
+            _log(f"SGP_REQ >> {_platform_id} start={start_index} count={target_count}")
+            try:
+                resp = requests.get(
+                    url,
+                    params={"startIndex": start_index, "count": target_count},
+                    headers={"Authorization": f"Bearer {_entitlement_token}"},
+                    timeout=15,
+                )
+                resp.raise_for_status()
+                sgp_data  = resp.json()
+                raw_games = sgp_data.get("games", [])
+                _log(f"SGP_RAW >> 回傳 {len(raw_games)} 筆原始資料")
+
+                results = []
+                for wrap in raw_games:
+                    game = wrap.get("json") or wrap
+                    if not game:
+                        continue
+                    try:
+                        parsed = _parse_one_game(game, "sgp")
+                        if parsed:
+                            results.append(parsed)
+                    except Exception as ge:
+                        _log(f"SGP_PARSE_ERR >> gameId={game.get('gameId','?')} >> {ge}")
+
+                if results:
+                    _log(f"SGP_OK >> 成功解析 {len(results)} 筆，直接回傳")
+                    return results
+                _log("SGP_EMPTY >> SGP 回傳空結果，降級至 LCU 路徑")
+            except Exception as sgp_err:
+                _log(f"SGP_FAIL >> {sgp_err}，降級至 LCU 路徑")
+
+        # ══ 路徑 B：LCU API（~20 筆）+ 本地累加快取 ═════════════════════
+        _log(f"LCU_REQ >> 抓取最新戰績 (puuid={_puuid[:8]}...)")
+        raw        = _client.get(
+            f"/lol-match-history/v1/products/lol/{_puuid}/matches"
+            f"?begIndex=0&endIndex=20",
+            headers={"Cache-Control": "no-cache", "Pragma": "no-cache"},
+        )
+        fresh_games = raw.get("games", {}).get("games", [])
+        _log(f"LCU_RAW >> 回傳 {len(fresh_games)} 筆")
+
+        # ── 解析 LCU 回傳資料，使用共用 helper ─────────────────────────
+        results = []
+        for game in fresh_games:
+            try:
+                parsed = _parse_one_game(game, "lcu")
+                if parsed:
+                    results.append(parsed)
+            except Exception as ge:
+                _log(f"LCU_PARSE_ERR >> gameId={game.get('gameId','?')} >> {ge}")
+
+        # ── 載入本地快取，合併並儲存 ─────────────────────────────────────
+        cached = _load_match_cache()
+        before = len(cached)
+        for r in results:
+            cached[str(r["gameId"])] = r
+        after = len(cached)
+        _save_match_cache(cached)
+        _log(f"LCU_CACHE >> 新增 {after - before} 筆，快取共 {after} 筆")
+
+        # ── 從合併快取依 gameId 降序排列後分頁回傳 ───────────────────────
+        all_sorted = sorted(cached.values(), key=lambda x: x.get("gameId", 0), reverse=True)
+        page_slice = all_sorted[start_index : start_index + target_count]
+        _log(f"LCU_HISTORY >> 快取共 {len(all_sorted)} 筆，回傳 [{start_index}:{start_index+target_count}] 共 {len(page_slice)} 筆")
+        return page_slice
 
     except Exception as e:
         _log(f"MATCH_HISTORY_ERR >> {e}")
