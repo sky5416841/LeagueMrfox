@@ -41,6 +41,9 @@ _rank_emblem_loaded = False
 _auto_pick         = False
 _auto_pick_champ_id= 0
 _last_pick_action_id = -1  # 防止對同一個 action 重複秒選
+_auto_ban          = False
+_auto_ban_champ_id = 0
+_last_ban_action_id = -1   # 防止對同一個 ban action 重複觸發
 _champ_valid_ids: set[int] = set()  # 僅含有 roles 的正常可玩英雄，過濾 NPC
 
 # 本地戰績快取路徑（data/ 已在 .gitignore，個人數據不上傳）
@@ -750,6 +753,15 @@ def set_auto_pick(enabled: bool, champ_id: int):
 
 
 @eel.expose
+def set_auto_ban(enabled: bool, champ_id: int):
+    global _auto_ban, _auto_ban_champ_id, _last_ban_action_id
+    _auto_ban          = bool(enabled)
+    _auto_ban_champ_id = int(champ_id) if champ_id else 0
+    _last_ban_action_id = -1
+    _log(f"AUTO_BAN_PROTOCOL >> {'ENGAGED' if _auto_ban else 'STANDBY'} // ChampID={_auto_ban_champ_id}")
+
+
+@eel.expose
 def get_champion_list() -> list:
     """回傳已排序的英雄清單 [{id, name}, ...]，嘗試多端點確保完整性。"""
     if not _client:
@@ -784,6 +796,64 @@ def get_champion_list() -> list:
     result.sort(key=lambda x: x["name"])
     _log(f"CHAMP_LIST >> 回傳 {len(result)} 位英雄")
     return result
+
+
+@eel.expose
+def get_champion_analytics(count: int = 200) -> list:
+    """
+    從最近 count 場戰績統計每位英雄的數據。
+    篩選出場數 >= 3，按勝率降序排列。
+    回傳: [{championId, name, games, wins, winRate, avgKDA, avgDamage}, ...]
+    """
+    if not _client or not _puuid:
+        return []
+    try:
+        _log(f"ANALYTICS >> 開始統計最近 {count} 場英雄數據...")
+        games = get_match_history(0, count)
+        if not games:
+            _log("ANALYTICS >> 無法取得戰績資料")
+            return []
+
+        stats: dict[int, dict] = {}
+        for g in games:
+            cid = g.get("championId", 0)
+            if not cid:
+                continue
+            if g.get("gameResult") == "REMAKE":
+                continue  # 排除重開場次
+            if cid not in stats:
+                stats[cid] = {"games": 0, "wins": 0, "kills": 0, "deaths": 0, "assists": 0, "damage": 0}
+            s = stats[cid]
+            s["games"]   += 1
+            s["wins"]    += 1 if g.get("win") else 0
+            s["kills"]   += g.get("kills", 0)
+            s["deaths"]  += g.get("deaths", 0)
+            s["assists"] += g.get("assists", 0)
+            s["damage"]  += g.get("damage", 0)
+
+        result = []
+        for cid, s in stats.items():
+            n = s["games"]
+            if n < 3:
+                continue
+            deaths  = s["deaths"] or 1
+            avg_kda = round((s["kills"] + s["assists"]) / deaths, 2)
+            result.append({
+                "championId": cid,
+                "name":       _champ_cache.get(cid, f"#{cid}"),
+                "games":      n,
+                "wins":       s["wins"],
+                "winRate":    round(s["wins"] / n * 100, 1),
+                "avgKDA":     avg_kda,
+                "avgDamage":  int(s["damage"] / n),
+            })
+
+        result.sort(key=lambda x: (-x["winRate"], -x["games"]))
+        _log(f"ANALYTICS >> 統計完成，共 {len(result)} 位英雄（≥3 場）")
+        return result
+    except Exception as e:
+        _log(f"ANALYTICS_ERR >> {e}")
+        return []
 
 
 @eel.expose
@@ -1034,19 +1104,15 @@ async def _handle_ready_check(data: dict):
 
 async def _handle_champ_select(data: dict):
     """
-    LeagueAkari 核心技術：英雄選擇階段自動秒選。
-    參考架構：localPlayerCellId 比對 actorCellId，
-    找到 type==pick、isInProgress==True、completed==False 的 action，
-    PATCH championId 後 POST complete 鎖定。
+    LeagueAkari 核心技術：英雄選擇階段自動秒選／禁角。
+    localPlayerCellId 比對 actorCellId，
+    依 type 分別處理 ban（禁角）與 pick（選角）。
     """
-    global _last_pick_action_id
+    global _last_pick_action_id, _last_ban_action_id
     if not isinstance(data, dict):
-        return
-    if not _auto_pick or not _auto_pick_champ_id:
         return
 
     local_cell = data.get("localPlayerCellId", -1)
-    # actions 是二維陣列（每個選角階段一個子陣列）
     all_actions = []
     for phase in data.get("actions", []):
         if isinstance(phase, list):
@@ -1055,25 +1121,52 @@ async def _handle_champ_select(data: dict):
             all_actions.append(phase)
 
     for action in all_actions:
-        if (action.get("actorCellId") == local_cell
-                and action.get("type", "").lower() == "pick"
-                and action.get("isInProgress", False)
-                and not action.get("completed", True)):
+        if action.get("actorCellId") != local_cell:
+            continue
+        if not action.get("isInProgress", False):
+            continue
+        if action.get("completed", True):
+            continue
 
-            action_id = action.get("id")
-            if action_id == _last_pick_action_id:
-                return  # 同一個 action 已處理，防止重複觸發
-            _last_pick_action_id = action_id
+        action_type = action.get("type", "").lower()
+        action_id   = action.get("id")
 
-            _log(f"CHAMP_SELECT >> 輪到我！actionId={action_id} 秒選 champId={_auto_pick_champ_id}")
+        # ── 自動禁角 ───────────────────────────────────────────────────
+        if action_type == "ban" and _auto_ban and _auto_ban_champ_id:
+            if action_id == _last_ban_action_id:
+                continue
+            _last_ban_action_id = action_id
+            _log(f"AUTO_BAN >> 禁角輪到我！actionId={action_id} 禁用 champId={_auto_ban_champ_id}")
             try:
-                # Step 1：Hover（intent）英雄
+                _client.patch(
+                    f"/lol-champ-select/v1/session/actions/{action_id}",
+                    json={"championId": _auto_ban_champ_id, "type": "ban"}
+                )
+                _log(f"AUTO_BAN >> PATCH champId={_auto_ban_champ_id} ✓")
+                _client.post(
+                    f"/lol-champ-select/v1/session/actions/{action_id}/complete",
+                    json={}
+                )
+                _log(f"AUTO_BAN >> CONFIRMED ✓✓")
+                try:
+                    eel.on_auto_ban_done(_auto_ban_champ_id)()
+                except Exception:
+                    pass
+            except Exception as e:
+                _log(f"AUTO_BAN_ERR >> {e}")
+
+        # ── 自動選角 ───────────────────────────────────────────────────
+        elif action_type == "pick" and _auto_pick and _auto_pick_champ_id:
+            if action_id == _last_pick_action_id:
+                continue
+            _last_pick_action_id = action_id
+            _log(f"AUTO_PICK >> 選角輪到我！actionId={action_id} 秒選 champId={_auto_pick_champ_id}")
+            try:
                 _client.patch(
                     f"/lol-champ-select/v1/session/actions/{action_id}",
                     json={"championId": _auto_pick_champ_id, "type": "pick"}
                 )
                 _log(f"AUTO_PICK >> PATCH champId={_auto_pick_champ_id} ✓")
-                # Step 2：Lock In（完成選角）
                 _client.post(
                     f"/lol-champ-select/v1/session/actions/{action_id}/complete",
                     json={}
@@ -1085,7 +1178,6 @@ async def _handle_champ_select(data: dict):
                     pass
             except Exception as e:
                 _log(f"AUTO_PICK_ERR >> {e}")
-            return
 
 
 # ── Launch ─────────────────────────────────────────────────────────────

@@ -3,6 +3,8 @@
 let autoAcceptEnabled  = false;
 let autoPickEnabled    = false;
 let autoPickChampId    = 0;
+let autoBanEnabled     = false;
+let autoBanChampId     = 0;
 let currentPage    = 1;
 let itemsPerPage   = 20;
 let _lastMatchCount = 0;
@@ -28,6 +30,7 @@ function switchTab(tab) {
   document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
   document.getElementById(`tab-${tab}`).classList.remove('hidden');
   document.getElementById(`nav-${tab}`).classList.add('active');
+  if (tab === 'analytics') loadAnalytics();
 }
 
 // ── 日誌 ───────────────────────────────────────────────────────────────
@@ -68,6 +71,18 @@ eel.expose(on_auto_pick_done);
 function on_auto_pick_done(champId) {
   const name = _champNameById(champId);
   append_log(`AUTO_PICK ▶▶ ${name} 已秒選鎖定 ✓✓`, true);
+  const flash = document.getElementById('accept-flash');
+  flash.classList.remove('flashing');
+  void flash.offsetWidth;
+  flash.classList.add('flashing');
+  setTimeout(() => flash.classList.remove('flashing'), 700);
+}
+
+// ── 自動禁角確認回調 ────────────────────────────────────────────────────
+eel.expose(on_auto_ban_done);
+function on_auto_ban_done(champId) {
+  const name = _champNameById(champId);
+  append_log(`AUTO_BAN ▶▶ ${name} 已禁用確認 ✓✓`, true);
   const flash = document.getElementById('accept-flash');
   flash.classList.remove('flashing');
   void flash.offsetWidth;
@@ -141,11 +156,62 @@ function selectChamp(id, name) {
   if (autoPickEnabled) eel.set_auto_pick(autoPickEnabled, autoPickChampId);
 }
 
+// ── 禁角英雄選擇器 ─────────────────────────────────────────────────────
+function _renderBanDropdown(query) {
+  const dd = document.getElementById('ban-picker-dropdown');
+  if (!dd) return;
+  const q        = (query || '').trim().toLowerCase();
+  const filtered = _champList.filter(c => c.name && c.id > 0 && !c.name.includes('末日') && !c.name.includes('NPC'));
+  const list     = q ? filtered.filter(c => c.name.toLowerCase().includes(q)) : filtered;
+  const show     = list.slice(0, 80);
+  if (list.length === 0) {
+    dd.innerHTML = '<div class="champ-picker-more">找不到符合的英雄</div>';
+    return;
+  }
+  dd.innerHTML = show.map(c =>
+    `<div class="champ-picker-item${autoBanChampId === c.id ? ' selected' : ''}"
+          onclick="selectBanChamp(${c.id},'${c.name.replace(/'/g, "\\'")}')">
+       ${c.name}
+     </div>`
+  ).join('');
+  if (list.length > 80) {
+    dd.innerHTML += `<div class="champ-picker-more">...還有 ${list.length - 80} 位，請輸入更精確名稱</div>`;
+  }
+}
+
+function openBanPicker() {
+  const dd = document.getElementById('ban-picker-dropdown');
+  if (dd) dd.classList.remove('hidden');
+  _renderBanDropdown(document.getElementById('ab-champ-search').value);
+}
+
+function filterBanPicker(query) {
+  const dd = document.getElementById('ban-picker-dropdown');
+  if (dd) dd.classList.remove('hidden');
+  _renderBanDropdown(query);
+}
+
+function selectBanChamp(id, name) {
+  autoBanChampId = id;
+  const input = document.getElementById('ab-champ-search');
+  if (input) input.value = name;
+  const hint = document.getElementById('ab-champ-hint');
+  if (hint) hint.textContent = `ID=${id}`;
+  const dd = document.getElementById('ban-picker-dropdown');
+  if (dd) dd.classList.add('hidden');
+  if (autoBanEnabled) eel.set_auto_ban(autoBanEnabled, autoBanChampId);
+}
+
 // 點選選擇器外部時關閉下拉
 document.addEventListener('click', (e) => {
   const wrap = document.getElementById('champ-picker-wrap');
   if (wrap && !wrap.contains(e.target)) {
     const dd = document.getElementById('champ-picker-dropdown');
+    if (dd) dd.classList.add('hidden');
+  }
+  const banWrap = document.getElementById('ban-picker-wrap');
+  if (banWrap && !banWrap.contains(e.target)) {
+    const dd = document.getElementById('ban-picker-dropdown');
     if (dd) dd.classList.add('hidden');
   }
 });
@@ -181,6 +247,116 @@ function toggleAutoPick() {
   }
 
   eel.set_auto_pick(autoPickEnabled, autoPickChampId);
+}
+
+// ── 自動禁角開關 ────────────────────────────────────────────────────────
+function toggleAutoBan() {
+  autoBanEnabled = !autoBanEnabled;
+
+  const btn  = document.getElementById('auto-ban-btn');
+  const lbl  = document.getElementById('ab-label');
+  const ind  = document.getElementById('ab-indicator');
+  const desc = document.getElementById('ab-desc');
+
+  if (autoBanEnabled) {
+    btn.classList.add('engaged');
+    lbl.innerHTML = '<span class="glow-red">[ 自動禁角：已啟動 ]</span>';
+    ind.className = 'w-3 h-3 bg-red-500 border-2 border-red-400 transition-all duration-300 shadow-[0_0_8px_rgba(239,68,68,0.8)] shrink-0';
+    desc.innerHTML = '<span style="color:rgba(239,68,68,0.55)">偵測到禁角輪到行動時，自動禁用目標英雄。</span>';
+  } else {
+    btn.classList.remove('engaged');
+    lbl.textContent = '[ 自動禁角 ]';
+    lbl.style       = '';
+    ind.className   = 'w-3 h-3 border-2 border-slate-700 bg-transparent transition-all duration-300 shrink-0';
+    desc.innerHTML  = '禁角階段輪到行動時，自動禁用指定英雄。';
+  }
+
+  eel.set_auto_ban(autoBanEnabled, autoBanChampId);
+}
+
+// ── 英雄分析 ────────────────────────────────────────────────────────────
+async function loadAnalytics() {
+  const statusEl  = document.getElementById('analytics-status');
+  const aceEl     = document.getElementById('analytics-ace');
+  const dangerEl  = document.getElementById('analytics-danger');
+  if (!statusEl) return;
+
+  statusEl.textContent = '資料載入中，最多取回 200 場...';
+  aceEl.innerHTML    = '<div class="text-[10px] text-slate-700 tracking-widest">載入中...</div>';
+  dangerEl.innerHTML = '<div class="text-[10px] text-slate-700 tracking-widest">載入中...</div>';
+
+  try {
+    const data = await eel.get_champion_analytics(200)();
+    if (!data || data.length === 0) {
+      statusEl.textContent = '暫無資料（需至少 3 場同英雄戰績）';
+      aceEl.innerHTML    = '<div class="text-[10px] text-slate-700">— 無資料 —</div>';
+      dangerEl.innerHTML = '<div class="text-[10px] text-slate-700">— 無資料 —</div>';
+      return;
+    }
+
+    statusEl.textContent = `共統計 ${data.length} 位英雄（≥3 場）`;
+
+    const ace    = data.slice(0, 5);
+    const danger = data.slice().sort((a, b) => a.winRate - b.winRate).slice(0, 3);
+    const maxDmg = Math.max(...data.map(d => d.avgDamage), 1);
+
+    function renderCard(champ, glowClass) {
+      const wrColor = champ.winRate >= 60 ? '#4ade80'
+                    : champ.winRate >= 50 ? '#a3e635'
+                    : champ.winRate >= 40 ? '#fb923c'
+                    : '#f87171';
+      const barPct  = Math.round(champ.winRate);
+      const dmgPct  = Math.round(champ.avgDamage / maxDmg * 100);
+      return `
+        <div class="analytics-card ${glowClass}">
+          <div class="flex items-center gap-3 mb-2">
+            <div class="analytics-champ-icon">
+              <img class="w-full h-full object-cover rounded"
+                   src="${IMG_PH}" ${IMG_ERR}
+                   data-champid="${champ.championId}"
+                   alt="${champ.name}">
+            </div>
+            <div class="flex-1 min-w-0">
+              <div class="text-xs tracking-widest text-slate-300 truncate">${champ.name}</div>
+              <div class="text-[10px] text-slate-600 mt-0.5">${champ.games} 場 · KDA ${champ.avgKDA}</div>
+            </div>
+            <div class="text-right shrink-0">
+              <div class="text-base font-bold" style="color:${wrColor}">${champ.winRate}%</div>
+              <div class="text-[9px] text-slate-700">${champ.wins}W ${champ.games - champ.wins}L</div>
+            </div>
+          </div>
+          <div class="analytics-bar-wrap">
+            <div class="analytics-bar-label">勝率</div>
+            <div class="analytics-bar-track">
+              <div class="analytics-bar-fill" style="width:${barPct}%;background:${wrColor}"></div>
+            </div>
+            <div class="analytics-bar-label text-right" style="color:${wrColor}">${barPct}%</div>
+          </div>
+          <div class="analytics-bar-wrap mt-1">
+            <div class="analytics-bar-label">均傷</div>
+            <div class="analytics-bar-track">
+              <div class="analytics-bar-fill" style="width:${dmgPct}%;background:#06b6d4"></div>
+            </div>
+            <div class="analytics-bar-label text-right text-cyan-800">${(champ.avgDamage/1000).toFixed(1)}k</div>
+          </div>
+        </div>`;
+    }
+
+    aceEl.innerHTML    = ace.map(c => renderCard(c, 'glow-card-ace')).join('');
+    dangerEl.innerHTML = danger.map(c => renderCard(c, 'glow-card-danger')).join('');
+
+    // 非同步載入英雄頭像
+    aceEl.querySelectorAll('[data-champid]').forEach(img => {
+      _loadChampIcon(parseInt(img.dataset.champid), img);
+    });
+    dangerEl.querySelectorAll('[data-champid]').forEach(img => {
+      _loadChampIcon(parseInt(img.dataset.champid), img);
+    });
+
+  } catch (e) {
+    statusEl.textContent = `載入失敗：${e}`;
+    append_log(`ANALYTICS_ERR >> ${e}`, true);
+  }
 }
 
 function _el(id) {

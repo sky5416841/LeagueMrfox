@@ -117,12 +117,14 @@ body, input, button, textarea {
 .glow-cyan   { text-shadow: 0 0 8px rgba(6,182,212,0.7), 0 0 18px rgba(6,182,212,0.3); }
 .glow-green  { color:#4ade80 !important; text-shadow: 0 0 8px rgba(74,222,128,0.8), 0 0 20px rgba(74,222,128,0.4); }
 .glow-orange { color:#fb923c !important; text-shadow: 0 0 8px rgba(251,146,60,0.8),  0 0 20px rgba(251,146,60,0.4); }
+.glow-red    { color:#f87171 !important; text-shadow: 0 0 8px rgba(239,68,68,0.8),   0 0 20px rgba(239,68,68,0.4); }
 
 /* ── Animations ───────────────────────────────────────────────────── */
 @keyframes blink            { 0%,100%{opacity:1} 50%{opacity:0} }
 @keyframes placeholder-pulse{ 0%,100%{opacity:.15} 50%{opacity:.35} }
 @keyframes status-pulse     { 0%,100%{opacity:1;box-shadow:0 0 4px rgba(74,222,128,.5)} 50%{opacity:.6;box-shadow:0 0 12px rgba(74,222,128,.9)} }
 @keyframes orange-pulse     { 0%,100%{box-shadow:0 0 6px rgba(251,146,60,.3),inset 0 0 6px rgba(251,146,60,.04)} 50%{box-shadow:0 0 22px rgba(251,146,60,.6),inset 0 0 12px rgba(251,146,60,.08)} }
+@keyframes red-pulse        { 0%,100%{box-shadow:0 0 6px rgba(239,68,68,.3),inset 0 0 6px rgba(239,68,68,.04)} 50%{box-shadow:0 0 22px rgba(239,68,68,.6),inset 0 0 12px rgba(239,68,68,.08)} }
 @keyframes accept-flash     { 0%{opacity:0} 20%{opacity:1} 100%{opacity:0} }
 
 .blink            { animation: blink 1s step-end infinite; }
@@ -169,6 +171,11 @@ body, input, button, textarea {
   border-color: #fb923c !important;
   background: rgba(251,146,60,0.05);
   animation: orange-pulse 2s ease-in-out infinite;
+}
+#auto-ban-btn.engaged {
+  border-color: #ef4444 !important;
+  background: rgba(239,68,68,0.05);
+  animation: red-pulse 2s ease-in-out infinite;
 }
 
 /* ── Accept flash overlay ─────────────────────────────────────────── */
@@ -749,4 +756,66 @@ body, input, button, textarea {
   font-size: 9px;
   color: #1e293b;
   letter-spacing: .12em;
+}
+
+/* ── Analytics Tab ────────────────────────────────────────────────── */
+.analytics-card {
+  background: rgba(2,10,20,0.6);
+  border: 1px solid rgba(6,182,212,0.08);
+  border-radius: 3px;
+  padding: 10px 12px;
+  transition: border-color .2s, box-shadow .2s;
+}
+
+.analytics-card.glow-card-ace {
+  border-left: 3px solid rgba(6,182,212,0.5);
+  box-shadow: -4px 0 12px rgba(6,182,212,0.06), inset 0 0 20px rgba(6,182,212,0.02);
+}
+.analytics-card.glow-card-ace:hover {
+  border-color: rgba(6,182,212,0.35);
+  box-shadow: -4px 0 20px rgba(6,182,212,0.14), inset 0 0 30px rgba(6,182,212,0.04);
+}
+
+.analytics-card.glow-card-danger {
+  border-left: 3px solid rgba(239,68,68,0.4);
+  box-shadow: -4px 0 12px rgba(239,68,68,0.05), inset 0 0 20px rgba(239,68,68,0.02);
+}
+.analytics-card.glow-card-danger:hover {
+  border-color: rgba(239,68,68,0.3);
+  box-shadow: -4px 0 20px rgba(239,68,68,0.12), inset 0 0 30px rgba(239,68,68,0.04);
+}
+
+.analytics-champ-icon {
+  width: 36px;
+  height: 36px;
+  border: 1px solid rgba(6,182,212,0.15);
+  border-radius: 3px;
+  overflow: hidden;
+  flex-shrink: 0;
+  background: #0a1628;
+}
+
+.analytics-bar-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.analytics-bar-label {
+  font-size: 9px;
+  color: #475569;
+  width: 26px;
+  letter-spacing: .08em;
+  flex-shrink: 0;
+}
+.analytics-bar-track {
+  flex: 1;
+  height: 4px;
+  background: rgba(15,23,42,0.8);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.analytics-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width .6s ease;
 }
