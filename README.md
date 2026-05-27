@@ -7,8 +7,8 @@
 <p align="center">英雄聯盟 LCU 戰情終端 — Cyberpunk 風格桌面工具</p>
 
 <p align="center">
-  <img src="https://img.shields.io/github/downloads/sky5416841/LeagueMrfox/total?style=flat-square&color=cyan&label=下載次數">
-  <img src="https://img.shields.io/github/v/release/sky5416841/LeagueMrfox?style=flat-square&color=blue&label=最新版本">
+  <img src="https://img.shields.io/github/downloads/sky5416841/LeagueMrfox/total?style=flat-square&color=cyan">
+  <img src="https://img.shields.io/github/v/release/sky5416841/LeagueMrfox?style=flat-square&color=blue">
   <img src="https://img.shields.io/badge/platform-Windows-informational?style=flat-square">
   <img src="https://img.shields.io/badge/python-3.11-green?style=flat-square">
 </p>
