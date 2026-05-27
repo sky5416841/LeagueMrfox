@@ -93,16 +93,36 @@ function on_auto_ban_done(champId) {
 // ── 大廳 X 光機回調 ────────────────────────────────────────────────────
 eel.expose(on_lobby_scan_ready);
 function on_lobby_scan_ready(players) {
-  append_log(`LOBBY_SCAN ▶▶ 隊友情報就緒 (${players.length} 位)`, true);
+  append_log(`LOBBY_SCAN ▶▶ 情報就緒 (${players.length} 位)`, true);
 
   const statusEl  = document.getElementById('live-status');
   const playersEl = document.getElementById('live-players');
   if (statusEl) statusEl.textContent = `掃描完成 · ${players.length} 位成員`;
 
   if (!playersEl) return;
-  playersEl.innerHTML = players.map(p => _renderLiveCard(p)).join('');
 
-  // 自動切換至即時戰情頁籤
+  const allies  = players.filter(p => !p.isEnemy);
+  const enemies = players.filter(p =>  p.isEnemy);
+
+  if (enemies.length > 0) {
+    // ARAM 模式：雙方選角均可見，用雙欄呈現完整情報
+    playersEl.innerHTML = `
+      <div class="ingame-panel">
+        <div class="ingame-team-col">
+          <div class="ingame-team-hdr ingame-team-hdr-blue">// 我方</div>
+          ${allies.map(p => _renderLiveCard(p)).join('')}
+        </div>
+        <div class="ingame-divider"></div>
+        <div class="ingame-team-col">
+          <div class="ingame-team-hdr ingame-team-hdr-red">// 敵方 [ARAM]</div>
+          ${enemies.map(p => _renderLiveCard(p)).join('')}
+        </div>
+      </div>`;
+  } else {
+    // 一般模式：單欄顯示隊友
+    playersEl.innerHTML = players.map(p => _renderLiveCard(p)).join('');
+  }
+
   switchTab('live');
 }
 
@@ -158,6 +178,7 @@ function on_ingame_scan_ready(data) {
 function _renderLiveCard(p) {
   const isAnon   = p.anonymous;
   const isSelf   = p.isSelf;
+  const isEnemy  = p.isEnemy;
   const noData   = p.total === 0;
   const wr       = p.winRate || 0;
   const hasChamp = p.championId && p.championId > 0;
@@ -201,7 +222,8 @@ function _renderLiveCard(p) {
          <div class="live-wr-fill" style="width:${wr}%;background:${wrColor}"></div>
        </div>`;
 
-  const selfClass = isSelf ? ' live-card-self' : '';
+  const selfClass  = isSelf  ? ' live-card-self'  : '';
+  const enemyClass = isEnemy ? ' live-card-enemy' : '';
 
   // 左側圖示：有英雄時顯示頭像，選角大廳時顯示 cellId 數字
   const iconHtml = hasChamp
@@ -212,7 +234,7 @@ function _renderLiveCard(p) {
     : `<div class="live-cell-id">${p.cellId ?? ''}</div>`;
 
   return `
-    <div class="live-card${selfClass}">
+    <div class="live-card${selfClass}${enemyClass}">
       <div class="flex items-center gap-3">
         ${iconHtml}
         <div class="flex-1 min-w-0">

@@ -860,6 +860,12 @@ body, input, button, textarea {
 .live-badge-self   { color:#67e8f9; border-color:rgba(103,232,249,0.3); background:rgba(6,182,212,0.08); }
 .live-badge-ace    { color:#fbbf24; border-color:rgba(251,191,36,0.35); background:rgba(251,191,36,0.06); }
 .live-badge-danger { color:#f87171; border-color:rgba(248,113,113,0.35); background:rgba(239,68,68,0.06); }
+.live-badge-enemy  { color:#f97316; border-color:rgba(249,115,22,0.35);  background:rgba(249,115,22,0.06); }
+
+.live-card-enemy {
+  border-left: 3px solid rgba(248,113,113,0.4);
+  background: rgba(239,68,68,0.03);
+}
 
 .live-wr-bar {
   height: 3px;
