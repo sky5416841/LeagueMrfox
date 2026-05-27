@@ -138,6 +138,15 @@ function on_champ_select_ended(phase) {
     if (status) status.textContent = '對局已結束，以下為本場情報紀錄。';
   }
   append_log(`GAMEFLOW ▶▶ ${phase}`, true);
+
+  // EndOfGame = 玩家已離開結算畫面，此時 LCU 已完成戰績寫入，自動刷新第一頁
+  if (phase === 'EndOfGame') {
+    setTimeout(() => {
+      append_log('AUTO_REFRESH ▶▶ 對局結束，自動刷新戰績第一頁...', true);
+      currentPage = 1;
+      loadMatchHistory();
+    }, 4000);
+  }
 }
 
 // ── 遊戲中 10 人雷達回調 ──────────────────────────────────────────────
