@@ -47,6 +47,7 @@ _last_ban_action_id = -1   # 防止對同一個 ban action 重複觸發
 _champ_valid_ids: set[int] = set()  # 僅含有 roles 的正常可玩英雄，過濾 NPC
 
 # 大廳 X 光機：掃描隊友戰力
+_current_gameflow_phase = ''   # 由 WS gameflow 事件即時維護，掃描前用於 phase 守衛
 _last_scanned_team_key  = ''   # 防止對同一場大廳重複掃描
 _lobby_scan_in_progress = False
 _ingame_scan_in_progress = False  # 遊戲中 10 人雷達
@@ -87,8 +88,15 @@ def _log(msg: str):
 
 
 def _maybe_trigger_lobby_scan(my_team: list):
-    """若大廳成員組合改變，啟動背景執行緒掃描所有隊友。"""
+    """若大廳成員組合改變，啟動背景執行緒掃描所有隊友。
+    嚴格守衛：只允許在 ChampSelect 階段觸發，其他任何狀態直接 return。
+    """
     global _last_scanned_team_key, _lobby_scan_in_progress
+    # Phase 守衛：Lobby / Matchmaking / ReadyCheck 等階段一律略過
+    if _current_gameflow_phase != "ChampSelect":
+        return
+    if not my_team:
+        return
     # 用 cellId 組成穩定的場次識別鍵（cellId 在同一場選角內固定）
     team_key = ",".join(sorted(str(p.get("cellId", -1)) for p in my_team))
     if not team_key or team_key == _last_scanned_team_key or _lobby_scan_in_progress:
@@ -1016,22 +1024,31 @@ def set_auto_ban(enabled: bool, champ_id: int):
 
 @eel.expose
 def trigger_lobby_scan():
-    """前端手動觸發：重新掃描當前選角大廳的隊友戰力。"""
+    """手動觸發大廳掃描。嚴格只在 ChampSelect 階段執行，其他狀態靜默略過。"""
     global _last_scanned_team_key
     if not _client:
         return
+    # ── Phase 守衛 第一層：先查 Gameflow 確認真的在選角 ──────────────────
+    try:
+        phase = _client.get("/lol-gameflow/v1/gameflow-phase")
+        if phase != "ChampSelect":
+            _log(f"LOBBY_SCAN >> 略過，當前狀態為 [{phase}]（非 ChampSelect）")
+            return
+    except Exception as e:
+        _log(f"LOBBY_SCAN >> 無法確認 Gameflow 狀態: {e}")
+        return
+    # ── 第二層：呼叫 champ-select session ────────────────────────────────
     try:
         session = _client.get("/lol-champ-select/v1/session")
         my_team = session.get("myTeam", [])
         if not my_team:
-            _log("LOBBY_SCAN >> 目前不在選角大廳")
+            _log("LOBBY_SCAN >> myTeam 為空，略過掃描")
             return
         _last_scanned_team_key = ""  # 強制重新掃描
         _maybe_trigger_lobby_scan(my_team)
     except requests.exceptions.HTTPError as he:
-        # 進入遊戲後 /lol-champ-select/v1/session 會消失，優雅攔截
         if he.response is not None and he.response.status_code == 404:
-            _log("LOBBY_SCAN >> 選角已結束，端點不存在 (404)，請改用遊戲中掃描")
+            _log("LOBBY_SCAN >> 選角已結束，端點不存在 (404)")
         else:
             _log(f"LOBBY_SCAN >> 手動觸發失敗: {he}")
     except Exception as e:
@@ -1040,9 +1057,18 @@ def trigger_lobby_scan():
 
 @eel.expose
 def trigger_ingame_scan():
-    """前端手動觸發：掃描遊戲中全場 10 人戰力雷達。"""
+    """手動觸發遊戲中 10 人雷達。嚴格只在 InProgress 階段執行。"""
     global _ingame_scan_in_progress
     if not _client:
+        return
+    # Phase 守衛：確認真的在遊戲中
+    try:
+        phase = _client.get("/lol-gameflow/v1/gameflow-phase")
+        if phase != "InProgress":
+            _log(f"INGAME_SCAN >> 略過，當前狀態為 [{phase}]（非 InProgress）")
+            return
+    except Exception as e:
+        _log(f"INGAME_SCAN >> 無法確認 Gameflow 狀態: {e}")
         return
     _ingame_scan_in_progress = False  # 允許重複觸發（手動重整）
     _maybe_trigger_ingame_scan()
@@ -1050,15 +1076,19 @@ def trigger_ingame_scan():
 
 @eel.expose
 def trigger_live_scan():
-    """統一掃描入口：自動偵測當前 Gameflow 狀態，選角大廳用大廳掃描，遊戲中用 10 人雷達。"""
+    """統一掃描入口：嚴格依 phase 路由，ChampSelect→大廳掃描，InProgress→10人雷達，其他→靜默。"""
     if not _client:
         return
     try:
         phase = _client.get("/lol-gameflow/v1/gameflow-phase")
-        if isinstance(phase, str) and phase == "InProgress":
+        if not isinstance(phase, str):
+            return
+        if phase == "ChampSelect":
+            trigger_lobby_scan()
+        elif phase == "InProgress":
             trigger_ingame_scan()
         else:
-            trigger_lobby_scan()
+            _log(f"LIVE_SCAN >> 當前狀態 [{phase}] 無可執行的掃描任務（非 ChampSelect/InProgress）")
     except Exception as e:
         _log(f"LIVE_SCAN >> 觸發失敗: {e}")
 
@@ -1409,18 +1439,22 @@ async def _handle_ready_check(data: dict):
 
 
 def _handle_gameflow_phase(phase):
-    """當 Gameflow 狀態改變時呼叫：路由至大廳掃描或遊戲中雷達。"""
-    global _last_scanned_team_key, _ingame_scan_in_progress
+    """WS Gameflow 事件：更新全域 phase 快取，並嚴格依階段路由各掃描任務。"""
+    global _current_gameflow_phase, _last_scanned_team_key, _ingame_scan_in_progress
     if not isinstance(phase, str):
         return
+
+    # 即時同步全域 phase（供所有掃描函式使用，無需額外 API 呼叫）
+    _current_gameflow_phase = phase
     _log(f"GAMEFLOW >> 狀態 → {phase}")
 
-    # 離開選角大廳時重置大廳掃描鍵，讓下次選角重新觸發
+    # 離開選角大廳：重置掃描鍵，讓下次進入選角時重新掃描
     if phase != "ChampSelect":
         _last_scanned_team_key = ""
 
+    # ── 嚴格 phase 路由 ──────────────────────────────────────────────────
     if phase == "InProgress":
-        # 選角結束、進入遊戲 → 啟動 10 人雷達
+        # 唯一允許觸發 10 人雷達的時機
         try:
             eel.on_champ_select_ended("InProgress")()
         except Exception:
@@ -1428,12 +1462,14 @@ def _handle_gameflow_phase(phase):
         _maybe_trigger_ingame_scan()
 
     elif phase in ("EndOfGame", "PreEndOfGame", "WaitingForStats", "Reconnect"):
-        # 遊戲結束 → 重置雷達狀態、通知前端
+        # 遊戲結束：重置雷達旗標、通知前端封存
         _ingame_scan_in_progress = False
         try:
             eel.on_champ_select_ended(phase)()
         except Exception:
             pass
+    # Lobby / Matchmaking / ReadyCheck / ChampSelect / GameStart 等其他狀態
+    # 不主動觸發任何掃描（大廳掃描由 WS champ-select session 事件驅動）
 
 
 async def _handle_champ_select(data: dict):
