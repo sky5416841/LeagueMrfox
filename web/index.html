@@ -2,7 +2,7 @@
 <html lang="zh-TW">
 <head>
   <meta charset="UTF-8">
-  <title>LCU 終端介面</title>
+  <title>LeagueMrfox</title>
   <script src="/eel.js"></script>
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -23,8 +23,8 @@
     <div class="sidebar-logo">
       <span class="text-cyan-400 text-xs">▶▶</span>
       <div>
-        <div class="text-cyan-300 text-sm tracking-[0.2em] glow-cyan">[ LCU_TERMINAL ]</div>
-        <div class="text-[9px] text-slate-600 tracking-widest mt-0.5">v2.0 // CYBERPUNK EDITION</div>
+        <div class="text-cyan-300 text-sm tracking-[0.2em] glow-cyan">[ LeagueMrfox ]</div>
+        <div class="text-[9px] text-slate-600 tracking-widest mt-0.5">V1.0 // CYBERPUNK EDITION</div>
       </div>
     </div>
 
@@ -34,7 +34,7 @@
 
       <button id="nav-dashboard" class="nav-item active" onclick="switchTab('dashboard')">
         <span class="nav-icon">◈</span>
-        <span class="nav-label">戰術儀表板</span>
+        <span class="nav-label">戰績</span>
         <span class="nav-tag">Dashboard</span>
       </button>
 
@@ -52,7 +52,7 @@
 
       <button id="nav-live" class="nav-item" onclick="switchTab('live')">
         <span class="nav-icon">📡</span>
-        <span class="nav-label">即時戰情</span>
+        <span class="nav-label">對戰</span>
         <span class="nav-tag">Live</span>
       </button>
     </nav>
@@ -132,7 +132,7 @@
           <!-- 玩家資訊 -->
           <div class="flex-1 flex flex-col justify-between gap-3 py-1">
             <div>
-              <div class="text-[9px] tracking-widest text-slate-700 mb-1">操作員代號</div>
+              <div class="text-[9px] tracking-widest text-slate-700 mb-1">召喚師名稱</div>
               <div id="summoner-name" class="text-lg text-cyan-300 glow-cyan tracking-wide">
                 <span class="placeholder-block">████████████</span><span class="blink text-cyan-700">▮</span>
               </div>
@@ -340,7 +340,7 @@
 
       <div class="panel shrink-0">
         <div class="panel-header flex items-center justify-between">
-          <span>// 大廳 X 光機 <span id="live-phase-badge" class="text-[9px] text-slate-700 ml-2"></span></span>
+          <span>// 大廳 <span id="live-phase-badge" class="text-[9px] text-slate-700 ml-2"></span></span>
           <button onclick="eel.trigger_live_scan()()" class="text-[9px] text-slate-700 hover:text-cyan-600 transition-colors font-normal">[ 重新掃描 ]</button>
         </div>
         <div id="live-status" class="px-5 py-2 text-[10px] text-slate-700">等待進入選角大廳...</div>
@@ -355,10 +355,10 @@
 
     </section>
 
-    <!-- ── 作戰日誌（底部固定） ── -->
+    <!-- ── 日誌（底部固定） ── -->
     <footer class="shrink-0 h-[72px] panel flex flex-col">
       <div class="panel-header flex items-center justify-between py-1">
-        <span>// 作戰日誌</span>
+        <span>// 日誌</span>
         <button onclick="clearLog()" class="text-[9px] text-slate-700 hover:text-slate-500 transition-colors font-normal">[ 清除 ]</button>
       </div>
       <div id="log" class="flex-1 overflow-y-auto px-4 py-1 custom-scroll">

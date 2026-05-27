@@ -1144,7 +1144,7 @@ async function doReconnect() {
 
 // ── 初始化 ─────────────────────────────────────────────────────────────
 window.addEventListener('load', async () => {
-  append_log('SYS >> 終端介面 V4 初始化完成');
+  append_log('SYS >> LeagueMrfox V1.0 初始化完成');
 
   document.getElementById('items-per-page').addEventListener('change', function () {
     itemsPerPage = parseInt(this.value, 10);

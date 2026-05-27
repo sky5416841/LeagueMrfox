@@ -172,6 +172,68 @@ def _aggregate_player_stats(puuid: str, count: int = 20) -> dict:
     return zero
 
 
+_TIER_ZH = {
+    "IRON": "黑鐵", "BRONZE": "青銅", "SILVER": "白銀",
+    "GOLD": "黃金", "PLATINUM": "白金", "EMERALD": "翡翠",
+    "DIAMOND": "鑽石", "MASTER": "大師",
+    "GRANDMASTER": "宗師", "CHALLENGER": "菁英",
+}
+_TIER_ICON = {
+    "IRON": "⬛", "BRONZE": "🟫", "SILVER": "🩶",
+    "GOLD": "🥇", "PLATINUM": "🔷", "EMERALD": "💚",
+    "DIAMOND": "💎", "MASTER": "🔮",
+    "GRANDMASTER": "👑", "CHALLENGER": "🏆",
+}
+_DIV_MAP = {"I": "Ⅰ", "II": "Ⅱ", "III": "Ⅲ", "IV": "Ⅳ"}
+_NO_RANK = {"", "NONE", "UNRANKED", "NA"}
+
+
+def _fetch_ranked_stats(puuid: str) -> dict:
+    """查詢玩家積分段位（優先單雙，次選彈性）。
+    回傳 tier / tierText / rankWins / rankLosses / rankWinRate / lp。
+    無段位時 tier='UNRANKED'，tierText='未排位'。
+    """
+    zero = {"tier": "UNRANKED", "tierText": "未排位", "division": "",
+            "rankWins": 0, "rankLosses": 0, "rankWinRate": 0.0, "lp": 0}
+    if not puuid or not _client:
+        return zero
+    try:
+        data   = _client.get(f"/lol-ranked/v1/ranked-stats/{puuid}")
+        queues = data.get("queues") or list((data.get("queueMap") or {}).values())
+        solo = next((q for q in queues if q.get("queueType") == "RANKED_SOLO_5x5"), None)
+        flex = next((q for q in queues if q.get("queueType") == "RANKED_FLEX_SR"),  None)
+        entry = solo or flex
+        if not entry:
+            return zero
+        tier = (entry.get("tier") or "").upper()
+        if tier in _NO_RANK:
+            return zero
+        division = (entry.get("division") or entry.get("rank") or "")
+        wins     = entry.get("wins", 0)
+        losses   = entry.get("losses", 0)
+        lp       = entry.get("leaguePoints", 0)
+        total    = wins + losses
+        wr       = round(wins / total * 100, 1) if total > 0 else 0.0
+        icon     = _TIER_ICON.get(tier, "")
+        zh       = _TIER_ZH.get(tier, tier)
+        if tier in ("MASTER", "GRANDMASTER", "CHALLENGER"):
+            tier_text = f"{icon} {zh}"
+        else:
+            tier_text = f"{icon} {zh} {_DIV_MAP.get(division, division)}"
+        return {
+            "tier":        tier,
+            "tierText":    tier_text,
+            "division":    division,
+            "rankWins":    wins,
+            "rankLosses":  losses,
+            "rankWinRate": wr,
+            "lp":          lp,
+        }
+    except Exception as e:
+        _log(f"RANKED_ERR >> {puuid[:8] if puuid else '?'}: {e}")
+        return zero
+
+
 def _maybe_trigger_lobby_scan(my_team: list):
     """若大廳成員組合改變，啟動背景執行緒掃描所有隊友。
     嚴格守衛：只允許在 ChampSelect 階段觸發，其他任何狀態直接 return。
@@ -211,23 +273,27 @@ def _scan_lobby_sync(my_team: list):
             is_enemy   = player.get("_teamSide", "ally") == "enemy"
 
             entry = {
-                "cellId":     cell_id,
-                "name":       "匿名玩家" if is_anon else "?",
-                "anonymous":  is_anon,
-                "isSelf":     is_self,
-                "isEnemy":    is_enemy,
-                "wins":       0, "total":      0,
-                "winRate":    0.0,
-                "avgKills":   0.0, "avgDeaths":  0.0, "avgAssists": 0.0,
-                "kda":        0.0,
-                "error":      False,
+                "cellId":      cell_id,
+                "name":        "匿名玩家" if is_anon else "?",
+                "anonymous":   is_anon,
+                "isSelf":      is_self,
+                "isEnemy":     is_enemy,
+                "wins":        0, "total":      0,
+                "winRate":     0.0,
+                "avgKills":    0.0, "avgDeaths": 0.0, "avgAssists": 0.0,
+                "kda":         0.0,
+                "tier":        "UNRANKED",
+                "tierText":    "未排位",
+                "rankWins":    0, "rankLosses": 0,
+                "rankWinRate": 0.0, "lp": 0,
+                "error":       False,
             }
 
             if is_anon:
                 results.append(entry)
                 continue
 
-            # ── 取召喚師名稱 ──────────────────────────────────────────
+            # ── 取召喚師名稱（v2 API）────────────────────────────────
             try:
                 if sid:
                     s = _client.get(f"/lol-summoner/v1/summoners/{sid}")
@@ -237,7 +303,7 @@ def _scan_lobby_sync(my_team: list):
                     if not puuid:
                         puuid = s.get("puuid", "")
                 elif puuid:
-                    s = _client.get(f"/lol-summoner/v1/summoners/by-puuid/{puuid}")
+                    s = _client.get(f"/lol-summoner/v2/summoners/puuid/{puuid}")
                     entry["name"] = (s.get("displayName") or
                                      s.get("gameName")    or
                                      s.get("name")        or "?")
@@ -253,6 +319,14 @@ def _scan_lobby_sync(my_team: list):
                 except Exception as e:
                     _log(f"LOBBY_SCAN >> 戰績失敗 puuid={puuid[:8] if puuid else '?'}: {e}")
                     entry["error"] = True
+
+            # ── 取積分段位 ────────────────────────────────────────────
+            if puuid:
+                try:
+                    ranked = _fetch_ranked_stats(puuid)
+                    entry.update(ranked)
+                except Exception as e:
+                    _log(f"LOBBY_SCAN >> 段位失敗 puuid={puuid[:8] if puuid else '?'}: {e}")
 
             results.append(entry)
 
@@ -377,14 +451,19 @@ def _scan_ingame_sync():
                 "championName": champ_nm,
                 "wins": 0, "total": 0, "winRate": 0.0,
                 "avgKills": 0.0, "avgDeaths": 0.0, "avgAssists": 0.0,
-                "kda": 0.0, "error": False,
+                "kda": 0.0,
+                "tier":        "UNRANKED",
+                "tierText":    "未排位",
+                "rankWins":    0, "rankLosses": 0,
+                "rankWinRate": 0.0, "lp": 0,
+                "error": False,
             }
 
-            # 嘗試從 LCU 取真實名稱（即使匿名也試一次，有 sid/puuid 就查）
+            # 嘗試從 LCU v2 取真實名稱（即使匿名也試一次）
             if is_anon and (sid or puuid):
                 try:
                     ep = (f"/lol-summoner/v1/summoners/{sid}" if sid
-                          else f"/lol-summoner/v1/summoners/by-puuid/{puuid}")
+                          else f"/lol-summoner/v2/summoners/puuid/{puuid}")
                     s = _client.get(ep)
                     real = (s.get("displayName") or s.get("gameName") or
                             s.get("name") or "").strip()
@@ -395,7 +474,7 @@ def _scan_ingame_sync():
                 except Exception:
                     pass
 
-            # 戰績查詢：有 PUUID 就查，不論是否匿名（這是擊穿的核心）
+            # 戰績查詢：有 PUUID 就查，不論是否匿名
             if puuid:
                 try:
                     player_stats = _aggregate_player_stats(puuid)
@@ -403,6 +482,14 @@ def _scan_ingame_sync():
                 except Exception as e:
                     _log(f"INGAME_SCAN >> 戰績失敗 {puuid[:8]}: {e}")
                     entry["error"] = True
+
+            # 段位查詢
+            if puuid:
+                try:
+                    entry.update(_fetch_ranked_stats(puuid))
+                except Exception as e:
+                    _log(f"INGAME_SCAN >> 段位失敗 {puuid[:8]}: {e}")
+
             return entry
 
         my_team    = [_scan_one(p) for p in my_raw]
@@ -1645,7 +1732,11 @@ async def _handle_champ_select(data: dict):
 
 # ── Launch ─────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    web_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
+    # 打包成 .exe 時 PyInstaller 解壓至 sys._MEIPASS；開發模式使用腳本所在目錄
+    if getattr(sys, "frozen", False):
+        web_dir = os.path.join(sys._MEIPASS, "web")
+    else:
+        web_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
     eel.init(web_dir)
 
     launch_opts = dict(size=(1280, 800), close_callback=lambda p, s: sys.exit(0))
