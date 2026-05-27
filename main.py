@@ -1739,10 +1739,24 @@ if __name__ == "__main__":
         web_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
     eel.init(web_dir)
 
-    launch_opts = dict(size=(1280, 800), close_callback=lambda p, s: sys.exit(0))
-    for mode in ("edge", "chrome", "default"):
-        try:
-            eel.start("index.html", mode=mode, **launch_opts)
-            break
-        except (SystemError, OSError, EnvironmentError):
-            continue
+    import threading, time, webview
+
+    # 背景執行緒：只啟動 eel 的 HTTP + WebSocket server，不開瀏覽器
+    def _eel_server():
+        eel.start("index.html", mode=None, block=True, port=8000,
+                  close_callback=lambda p, s: None)
+
+    t = threading.Thread(target=_eel_server, daemon=True)
+    t.start()
+    time.sleep(1.0)  # 等待 server 就緒
+
+    # 用 pywebview 開啟原生視窗（Windows 使用 WebView2 引擎，無瀏覽器 UI）
+    webview.create_window(
+        "LeagueMrfox",
+        "http://localhost:8000/index.html",
+        width=1280,
+        height=800,
+        min_size=(800, 600),
+    )
+    webview.start()
+    sys.exit(0)
