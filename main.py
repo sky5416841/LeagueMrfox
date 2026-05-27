@@ -1739,7 +1739,12 @@ if __name__ == "__main__":
         web_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
     eel.init(web_dir)
 
-    launch_opts = dict(size=(1280, 800), close_callback=lambda p, s: sys.exit(0))
+    ico_path = os.path.join(web_dir, "app.ico")
+    launch_opts = dict(
+        size=(1280, 800),
+        close_callback=lambda p, s: sys.exit(0),
+        icon=ico_path,
+    )
     for mode in ("edge", "chrome", "default"):
         try:
             eel.start("index.html", mode=mode, **launch_opts)
