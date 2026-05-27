@@ -4,6 +4,11 @@ __pycache__/
 *.pyo
 .env
 
+# PyInstaller 打包產物（不入版本控制）
+dist/
+build/
+*.spec
+
 # 忽略所有本地戰績與測試資料（使用者個人資料，不應進入版本控制）
 data/*.json
 !data/package.json
