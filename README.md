@@ -11,6 +11,7 @@
   <img src="https://img.shields.io/github/v/release/sky5416841/LeagueMrfox?style=flat-square&color=blue">
   <img src="https://img.shields.io/badge/platform-Windows-informational?style=flat-square">
   <img src="https://img.shields.io/badge/python-3.11-green?style=flat-square">
+  <img src="https://img.shields.io/badge/version-1.3-cyan?style=flat-square">
 </p>
 
 ---
@@ -23,7 +24,8 @@
 | **對戰** | 大廳 / 遊戲中自動掃描全場 10 人，顯示近 20 場勝率、KDA、即時段位 |
 | **自動化** | 自動接受配對、自動選角、自動禁角（秒選 / 秒禁） |
 | **英雄分析** | 統計個人拿手英雄與避雷英雄（≥ 3 場），含平均傷害 |
-| **10 人雷達** | 雙欄呈現敵我雙方戰力，含單排 / 彈性段位透視 |
+| **10 人雷達** | 雙欄呈現敵我雙方戰力，含單排 / 彈性段位透視；支援反匿名擊穿 |
+| **日誌 Console** | 獨立全螢幕分頁顯示系統日誌，支援文字選取複製 |
 
 ---
 
@@ -83,12 +85,7 @@ build.bat
 
 ## 7. 程式展示
 
-<p align="center">
-  <img src="scshot/截圖一.png" width="800" alt="截圖一">
-</p>
-<p align="center">
-  <img src="scshot/截圖二.png" width="800" alt="截圖二">
-</p>
+> 截圖更新中
 
 ---
 
@@ -97,4 +94,4 @@ build.bat
 - 本工具僅供個人學習與研究使用
 - 請勿用於違反 Riot Games 服務條款的行為
 - LCU API 為非官方介面，Riot 可能隨時異動，使用風險自負
-- ⚠️ 此為初版，可能存在大量 Bug 及功能不完善之處，敬請見諒
+- ⚠️ 持續開發中，可能存在 Bug 及功能不完善之處，敬請見諒
