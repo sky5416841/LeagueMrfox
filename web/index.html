@@ -57,6 +57,12 @@
         <span class="nav-label">對戰</span>
         <span class="nav-tag">Live</span>
       </button>
+
+      <button id="nav-logs" class="nav-item" onclick="switchTab('logs')">
+        <span class="nav-icon">⬛</span>
+        <span class="nav-label">日誌</span>
+        <span class="nav-tag">Console</span>
+      </button>
     </nav>
 
     <!-- 底部：連線狀態 + 時鐘 -->
@@ -357,20 +363,22 @@
 
     </section>
 
-    <!-- ── 日誌（底部固定） ── -->
-    <footer class="shrink-0 h-[72px] panel flex flex-col">
-      <div class="panel-header flex items-center justify-between py-1">
-        <span>// 日誌</span>
-        <button onclick="clearLog()" class="text-[9px] text-slate-700 hover:text-slate-500 transition-colors font-normal">[ 清除 ]</button>
-      </div>
-      <div id="log" class="flex-1 overflow-y-auto px-4 py-1 custom-scroll">
-        <div class="log-line">
-          <span class="log-ts">[--:--:--]</span>
-          <span class="log-arrow">▶</span>
-          <span class="log-msg">終端介面已載入，等待連線...</span>
+    <!-- ── 日誌 Tab ── -->
+    <section id="tab-logs" class="tab-section flex-1 min-h-0 flex flex-col gap-3 hidden">
+      <div class="panel flex-1 min-h-0 flex flex-col">
+        <div class="panel-header flex items-center justify-between">
+          <span>// 日誌 <span class="text-slate-700 text-[9px]">Console</span></span>
+          <button onclick="clearLog()" class="text-[9px] text-slate-700 hover:text-slate-500 transition-colors font-normal">[ 清除 ]</button>
+        </div>
+        <div id="log" class="log-container flex-1 overflow-y-auto px-4 py-2 custom-scroll">
+          <div class="log-line">
+            <span class="log-ts">[--:--:--]</span>
+            <span class="log-arrow">▶</span>
+            <span class="log-msg">終端介面已載入，等待連線...</span>
+          </div>
         </div>
       </div>
-    </footer>
+    </section>
 
   </main>
 </div>

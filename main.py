@@ -81,7 +81,12 @@ _platform_id       = ''   # 例如 "TW2"
 _entitlement_token = ''   # Riot Entitlements JWT（SGP 認證用）
 
 # ── Helper ─────────────────────────────────────────────────────────────
+_log_file = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "debug.log"), "a", encoding="utf-8", buffering=1)
+
 def _log(msg: str):
+    import datetime
+    line = f"[{datetime.datetime.now().strftime('%H:%M:%S')}] {msg}"
+    _log_file.write(line + "\n")
     try:
         eel.append_log(msg)()
     except Exception:
@@ -394,37 +399,61 @@ def _scan_ingame_sync():
             _log("INGAME_SCAN >> 所有端點均無玩家資料，放棄掃描")
             return
 
-        # ═══ 統一隊伍 ID（相容 coregame "TEAM_100" 與 gameflow teamId=100）══
+        # ═══ 統一隊伍 ID（相容 coregame ORDER/CHAOS、TEAM_100/200、整數）══
         def _tid(p: dict) -> int:
             raw = p.get("teamId") or p.get("_rawTeam", 0)
             if raw in (100, 200):
                 return int(raw)
-            t = str(p.get("team", "")).upper()
-            return 100 if "100" in t else (200 if "200" in t else 0)
+            s = str(raw or p.get("team", "") or "").upper()
+            if "100" in s or "ORDER" in s:
+                return 100
+            if "200" in s or "CHAOS" in s:
+                return 200
+            return 0
+
+        # ═══ 用 gameflow 建立 puuid→team 對照表（最可靠的隊伍來源）══════════
+        _gf_tid_map: dict[str, int] = {}
+        try:
+            gf_tid = _client.get("/lol-gameflow/v1/session")
+            gd_tid = gf_tid.get("gameData", {})
+            for pp in gd_tid.get("teamOne", []):
+                if pp.get("puuid") and pp["puuid"] != _EMPTY_PUUID:
+                    _gf_tid_map[pp["puuid"]] = 100
+            for pp in gd_tid.get("teamTwo", []):
+                if pp.get("puuid") and pp["puuid"] != _EMPTY_PUUID:
+                    _gf_tid_map[pp["puuid"]] = 200
+            _log(f"INGAME_SCAN >> GF隊伍對照表 {len(_gf_tid_map)} 筆")
+        except Exception as e:
+            _log(f"INGAME_SCAN >> GF隊伍對照表失敗: {e}")
+
+        def _tid_final(p: dict) -> int:
+            puuid = p.get("puuid", "")
+            if puuid and puuid in _gf_tid_map:
+                return _gf_tid_map[puuid]
+            return _tid(p)
 
         # ═══ 確認自己所在隊伍 ═════════════════════════════════════════════════
         my_tid = 0
         for p in all_raw:
             if p.get("puuid") == _puuid:
-                my_tid = _tid(p); break
+                my_tid = _tid_final(p); break
 
         if not my_tid:
-            # coregame 中找不到自己時，再查一次 gameflow 確認隊伍
-            try:
-                gf = _client.get("/lol-gameflow/v1/session")
-                gd = gf.get("gameData", {})
-                if any(p.get("puuid") == _puuid for p in gd.get("teamOne", [])):
-                    my_tid = 100
-                elif any(p.get("puuid") == _puuid for p in gd.get("teamTwo", [])):
-                    my_tid = 200
-            except Exception:
-                pass
+            my_tid = _gf_tid_map.get(_puuid, 0)
 
         if not my_tid:
-            my_tid = 100  # 最後保底，不讓掃描完全失敗
+            my_tid = 100  # 最後保底
 
-        my_raw    = [p for p in all_raw if _tid(p) == my_tid]
-        enemy_raw = [p for p in all_raw if _tid(p) != my_tid and _tid(p) != 0]
+        # 診斷：記錄每位玩家的 teamId 原始值
+        for p in all_raw:
+            raw_tid = p.get("teamId") or p.get("_rawTeam", "N/A")
+            resolved = _tid_final(p)
+            puuid_tail = (p.get("puuid") or "")[-6:] or "N/A"
+            _log(f"INGAME_SCAN >> 玩家 puuid=...{puuid_tail} teamId={raw_tid!r} → {resolved}")
+
+        my_raw    = [p for p in all_raw if _tid_final(p) == my_tid]
+        # 無法判斷隊伍(0)的玩家歸入敵方，確保不漏人
+        enemy_raw = [p for p in all_raw if _tid_final(p) != my_tid]
         _log(f"INGAME_SCAN >> 我方 {len(my_raw)} + 敵方 {len(enemy_raw)}（來源: {source}）")
 
         # ═══ 預抓 gameflow 名稱快取 ══════════════════════════════════════════
