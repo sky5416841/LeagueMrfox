@@ -85,7 +85,12 @@ build.bat
 
 ## 7. 程式展示
 
-> 截圖更新中
+<p align="center">
+  <img src="scshot/截圖一.png" width="800" alt="截圖一">
+</p>
+<p align="center">
+  <img src="scshot/截圖二.png" width="800" alt="截圖二">
+</p>
 
 ---
 
