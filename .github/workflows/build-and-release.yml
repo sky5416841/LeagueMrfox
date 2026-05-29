@@ -23,11 +23,15 @@ jobs:
         run: |
           TAG="${{ github.event.release.tag_name }}"
           if [ -z "$TAG" ]; then
-            TAG=$(gh release list --repo ${{ github.repository }} --limit 1 --json tagName --jq '.[0].tagName')
+            TAG=$(gh release list --repo ${{ github.repository }} --limit 1 --json tagName --jq '.[0].tagName' 2>/dev/null)
           fi
-          NOTES=$(gh release view "$TAG" --repo ${{ github.repository }} --json body --jq '.body')
+          echo "Resolved TAG: $TAG"
+
+          NOTES=$(gh release view "$TAG" --repo ${{ github.repository }} --json body --jq '.body' 2>/dev/null || echo "本次版本更新")
           DATE=$(date '+%Y/%m/%d')
-          ASSET_URL=$(gh release view "$TAG" --repo ${{ github.repository }} --json assets --jq '.assets[] | select(.name | endswith(".exe")) | .browserDownloadUrl')
+          ASSET_URL=$(gh release view "$TAG" --repo ${{ github.repository }} --json assets 2>/dev/null | jq -r '.assets[] | select(.name | endswith(".exe")) | .browserDownloadUrl' | head -1)
+
+          echo "ASSET_URL: $ASSET_URL"
           echo "tag=$TAG" >> $GITHUB_OUTPUT
           echo "notes=${NOTES:-本次版本更新}" >> $GITHUB_OUTPUT
           echo "date=$DATE" >> $GITHUB_OUTPUT
