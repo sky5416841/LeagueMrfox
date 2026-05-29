@@ -1,0 +1,102 @@
+name: 🦊 Build & Release LeagueMrfox
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - '.gitignore'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 📦 安裝依賴
+        run: |
+          pip install pyinstaller eel pywebview pythonnet
+          pip install -r requirements.txt
+
+      - name: 🔨 打包 exe
+        run: |
+          python -m eel main.py web `
+            --onefile --noconsole --icon=app.ico --name="LeagueMrfox" `
+            --hidden-import webview `
+            --hidden-import webview.platforms.winforms `
+            --hidden-import clr
+
+      - name: 🗑️ 刪除舊的 Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete latest --yes 2>$null || true
+
+      - name: 🚀 建立新 Release
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $DATE = (Get-Date -Format "yyyy/MM/dd")
+          $TAG = "latest"
+          gh release create $TAG dist/LeagueMrfox.exe `
+            --title "LeagueMrfox $DATE" `
+            --notes "自動建置版本 - $DATE" `
+            --latest
+          $URL = gh release view $TAG --json assets --jq '.assets[0].browserDownloadUrl'
+          echo "download_url=$URL" >> $env:GITHUB_OUTPUT
+          echo "date=$DATE" >> $env:GITHUB_OUTPUT
+
+      - name: 🗑️ 刪除舊的 Discord 訊息
+        if: hashFiles('.last_news_msg_id') != ''
+        env:
+          DISCORD_WEBHOOK_NEWS: ${{ secrets.DISCORD_WEBHOOK_NEWS }}
+        shell: bash
+        run: |
+          OLD_ID=$(cat .last_news_msg_id)
+          curl -s -X DELETE "${DISCORD_WEBHOOK_NEWS}/messages/${OLD_ID}"
+
+      - name: 📢 發送 Discord 更新通知
+        id: send_news
+        env:
+          DISCORD_WEBHOOK_NEWS: ${{ secrets.DISCORD_WEBHOOK_NEWS }}
+          ROLE_ID: ${{ secrets.LEAGUEMRFOX_ROLE_ID }}
+        shell: bash
+        run: |
+          RESPONSE=$(curl -s -X POST "${DISCORD_WEBHOOK_NEWS}?wait=true" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"content\": \"<@&${ROLE_ID}>\",
+              \"allowed_mentions\": {\"roles\": [\"${ROLE_ID}\"]},
+              \"embeds\": [{
+                \"title\": \"🦊 LeagueMrfox 已更新！\",
+                \"description\": \"新版本已發布，點擊下方連結下載最新版本。\",
+                \"color\": 1752220,
+                \"fields\": [
+                  {\"name\": \"📅 更新日期\", \"value\": \"${{ steps.release.outputs.date }}\", \"inline\": true},
+                  {\"name\": \"⬇️ 下載連結\", \"value\": \"[點此下載 LeagueMrfox.exe](${{ steps.release.outputs.download_url }})\", \"inline\": false}
+                ],
+                \"footer\": {\"text\": \"狐狸先生的小木屋 · 自動更新通知\"}
+              }]
+            }")
+          echo "msg_id=$(echo "$RESPONSE" | jq -r '.id')" >> $GITHUB_OUTPUT
+
+      - name: 💾 儲存訊息 ID
+        shell: bash
+        run: |
+          echo "${{ steps.send_news.outputs.msg_id }}" > .last_news_msg_id
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .last_news_msg_id
+          git diff --staged --quiet || git commit -m "chore: update Discord message ID"
+          git push
