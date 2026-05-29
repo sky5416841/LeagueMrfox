@@ -36,24 +36,14 @@ jobs:
             --hidden-import webview.platforms.winforms `
             --hidden-import clr
 
-      - name: 🗑️ 刪除舊的 Release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release delete latest --yes 2>$null || true
-
-      - name: 🚀 建立新 Release
+      - name: 🔄 更新 v1.0 Release 的 exe
         id: release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           $DATE = (Get-Date -Format "yyyy/MM/dd")
-          $TAG = "latest"
-          gh release create $TAG dist/LeagueMrfox.exe `
-            --title "LeagueMrfox $DATE" `
-            --notes "自動建置版本 - $DATE" `
-            --latest
-          $URL = gh release view $TAG --json assets --jq '.assets[0].browserDownloadUrl'
+          gh release upload v1.0 dist/LeagueMrfox.exe --clobber
+          $URL = "https://github.com/sky5416841/LeagueMrfox/releases/download/v1.0/LeagueMrfox.exe"
           echo "download_url=$URL" >> $env:GITHUB_OUTPUT
           echo "date=$DATE" >> $env:GITHUB_OUTPUT
 
