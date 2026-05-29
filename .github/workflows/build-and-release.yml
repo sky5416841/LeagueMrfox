@@ -29,7 +29,7 @@ jobs:
 
           NOTES=$(gh release view "$TAG" --repo ${{ github.repository }} --json body --jq '.body' 2>/dev/null || echo "本次版本更新")
           DATE=$(date '+%Y/%m/%d')
-          ASSET_URL=$(gh release view "$TAG" --repo ${{ github.repository }} --json assets 2>/dev/null | jq -r '.assets[] | select(.name | endswith(".exe")) | .browserDownloadUrl' | head -1)
+          ASSET_URL=$(gh release view "$TAG" --repo ${{ github.repository }} --json assets 2>/dev/null | jq -r '.assets[] | select(.name | endswith(".exe")) | .url' | head -1)
 
           echo "ASSET_URL: $ASSET_URL"
           echo "tag=$TAG" >> $GITHUB_OUTPUT
