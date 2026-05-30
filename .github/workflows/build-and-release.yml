@@ -90,6 +90,17 @@ jobs:
             }")
           echo "msg_id=$(echo "$RESPONSE" | jq -r '.id')" >> $GITHUB_OUTPUT
 
+      - name: 🔢 更新版本語音頻道名稱
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          VERSION_CHANNEL_ID: ${{ secrets.VERSION_CHANNEL_ID }}
+        run: |
+          curl -s -X PATCH "https://discord.com/api/v10/channels/${VERSION_CHANNEL_ID}" \
+            -H "Authorization: Bot ${BOT_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"name\": \"🦊 LeagueMrfox ${{ steps.info.outputs.tag }}\"}"
+          echo "版本頻道已更新為 🦊 LeagueMrfox ${{ steps.info.outputs.tag }}"
+
       - name: 💾 儲存新的訊息 ID
         run: |
           mkdir -p .msg_ids
