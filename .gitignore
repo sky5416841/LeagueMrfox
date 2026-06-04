@@ -15,7 +15,6 @@ data/*.json
 !data/manifest.json
 
 # 截圖與本地 debug log
-scshot/
 debug.log
 run_log.txt
 
