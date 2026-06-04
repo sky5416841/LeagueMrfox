@@ -11,7 +11,7 @@
   <img src="https://img.shields.io/github/v/release/sky5416841/LeagueMrfox?style=flat-square&color=blue">
   <img src="https://img.shields.io/badge/platform-Windows-informational?style=flat-square">
   <img src="https://img.shields.io/badge/python-3.11-green?style=flat-square">
-  <img src="https://img.shields.io/badge/version-1.3-cyan?style=flat-square">
+  <img src="https://img.shields.io/badge/version-1.2-cyan?style=flat-square">
 </p>
 
 ---
@@ -25,6 +25,10 @@
 | **自動化** | 自動接受配對、自動選角、自動禁角（秒選 / 秒禁） |
 | **英雄分析** | 統計個人拿手英雄與避雷英雄（≥ 3 場），含平均傷害 |
 | **10 人雷達** | 雙欄呈現敵我雙方戰力，含單排 / 彈性段位透視；支援反匿名擊穿 |
+| **拿手英雄 Top3** | 每位玩家顯示最常玩、勝率最高的 3 個英雄，知敵方拿手好 ban / 防 |
+| **連勝 / 連敗** | 🔥 連勝 / ❄️ 連敗徽章，一眼看出對手手感 |
+| **近期趨勢** | 近 5 場 W/L 走勢方塊，滑鼠移上顯示單場 KDA |
+| **開黑偵測** | 以 `teamParticipantId` 標記敵我雙方組隊玩家（同組同色） |
 | **日誌 Console** | 獨立全螢幕分頁顯示系統日誌，支援文字選取複製 |
 
 ---
@@ -71,7 +75,7 @@ build.bat
 
 - **後端**：Python 3.11 + [Eel](https://github.com/python-eel/Eel)
 - **前端**：Vanilla JS + Tailwind CSS
-- **視窗**：[pywebview](https://pywebview.flowrl.com/)（Windows WebView2，原生視窗、無瀏覽器 UI）
+- **視窗**：[pywebview](https://pywebview.flowrl.com/)（Windows WebView2，無邊框原生視窗 + 自訂標題列）
 - **通訊**：LCU API（本機 HTTPS + WebSocket 事件監聽）
 - **打包**：PyInstaller（`--onefile --noconsole`）
 
