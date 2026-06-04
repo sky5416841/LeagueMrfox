@@ -30,7 +30,9 @@ jobs:
           NOTES=$(gh release view "$TAG" --repo ${{ github.repository }} --json body --jq '.body' 2>/dev/null || echo "本次版本更新")
           NOTES=${NOTES:-本次版本更新}
           DATE=$(date '+%Y/%m/%d')
+          # 用公開下載連結（browser_download_url），避免 webhook 26MB 檔案上傳上限問題
           ASSET_URL=$(gh release view "$TAG" --repo ${{ github.repository }} --json assets 2>/dev/null | jq -r '.assets[] | select(.name | endswith(".exe")) | .url' | head -1)
+          DOWNLOAD_URL="https://github.com/${{ github.repository }}/releases/download/${TAG}/LeagueMrfox.exe"
 
           # 將多行 release notes JSON 轉義成單行（去掉 jq 外層引號），同時解決 GITHUB_OUTPUT 與 Discord JSON 的多行問題
           NOTES_ESC=$(printf '%s' "$NOTES" | jq -Rs '.')
@@ -40,27 +42,27 @@ jobs:
           echo "tag=$TAG" >> $GITHUB_OUTPUT
           echo "notes=$NOTES_ESC" >> $GITHUB_OUTPUT
           echo "date=$DATE" >> $GITHUB_OUTPUT
-          echo "asset_url=$ASSET_URL" >> $GITHUB_OUTPUT
-
-      - name: 📥 下載 exe
-        run: curl -L -o LeagueMrfox.exe "${{ steps.info.outputs.asset_url }}"
+          echo "download_url=$DOWNLOAD_URL" >> $GITHUB_OUTPUT
 
       - name: 🗑️ 刪除舊的下載訊息
         env:
           DISCORD_WEBHOOK_FILES: ${{ secrets.DISCORD_WEBHOOK_FILES }}
         run: |
           if [ -f .msg_ids/file_msg_id ]; then
-            curl -s -X DELETE "${DISCORD_WEBHOOK_FILES}/messages/$(cat .msg_ids/file_msg_id)"
+            OLD_ID=$(cat .msg_ids/file_msg_id)
+            if [ -n "$OLD_ID" ] && [ "$OLD_ID" != "null" ]; then
+              curl -s -X DELETE "${DISCORD_WEBHOOK_FILES}/messages/${OLD_ID}"
+            fi
           fi
 
-      - name: 📤 發送 exe 到下載連結
+      - name: 📤 發送下載連結
         id: send_file
         env:
           DISCORD_WEBHOOK_FILES: ${{ secrets.DISCORD_WEBHOOK_FILES }}
         run: |
           RESPONSE=$(curl -s -X POST "${DISCORD_WEBHOOK_FILES}?wait=true" \
-            -F "payload_json={\"content\":\"🦊 **LeagueMrfox ${{ steps.info.outputs.tag }} 最新版來囉！**\n直接點擊下方檔案下載即可 👇\"}" \
-            -F "file=@LeagueMrfox.exe")
+            -H "Content-Type: application/json" \
+            -d "{\"content\":\"🦊 **LeagueMrfox ${{ steps.info.outputs.tag }} 最新版來囉！**\n⬇️ 點此下載：${{ steps.info.outputs.download_url }}\"}")
           echo "msg_id=$(echo "$RESPONSE" | jq -r '.id')" >> $GITHUB_OUTPUT
 
       - name: 🗑️ 刪除舊的更新訊息
