@@ -44,16 +44,27 @@ jobs:
           echo "date=$DATE" >> $GITHUB_OUTPUT
           echo "download_url=$DOWNLOAD_URL" >> $GITHUB_OUTPUT
 
-      - name: 🗑️ 刪除舊的下載訊息
+      - name: 🗑️ 清空下載頻道舊訊息（只保留最新一則）
         env:
           DISCORD_WEBHOOK_FILES: ${{ secrets.DISCORD_WEBHOOK_FILES }}
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
         run: |
-          if [ -f .msg_ids/file_msg_id ]; then
-            OLD_ID=$(cat .msg_ids/file_msg_id)
-            if [ -n "$OLD_ID" ] && [ "$OLD_ID" != "null" ]; then
-              curl -s -X DELETE "${DISCORD_WEBHOOK_FILES}/messages/${OLD_ID}"
-            fi
+          # 1. 從 webhook 取得所屬頻道 ID
+          CH_ID=$(curl -s "${DISCORD_WEBHOOK_FILES}" | jq -r '.channel_id')
+          echo "Channel: $CH_ID"
+          if [ -z "$CH_ID" ] || [ "$CH_ID" = "null" ]; then
+            echo "取不到頻道 ID，跳過清空"; exit 0
           fi
+          # 2. 用 bot token 取最近 50 則訊息的 ID
+          IDS=$(curl -s -H "Authorization: Bot ${BOT_TOKEN}" \
+            "https://discord.com/api/v10/channels/${CH_ID}/messages?limit=50" | jq -r '.[].id')
+          # 3. 逐一刪除（單刪相容 14 天以上舊訊息）
+          for ID in $IDS; do
+            curl -s -X DELETE -H "Authorization: Bot ${BOT_TOKEN}" \
+              "https://discord.com/api/v10/channels/${CH_ID}/messages/${ID}" > /dev/null
+            sleep 0.4
+          done
+          echo "已清空舊訊息"
 
       - name: 📤 發送下載連結
         id: send_file
