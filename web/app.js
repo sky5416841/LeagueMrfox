@@ -259,6 +259,23 @@ function _renderLiveCard(p) {
          <div class="live-wr-fill" style="width:${wr}%;background:${wrColor}"></div>
        </div>`;
 
+  // 拿手英雄 Top3
+  const champs = p.topChampions || [];
+  const topChampsHtml = (noData || champs.length === 0) ? '' : `
+    <div class="top-champs">
+      <span class="top-champs-label">拿手</span>
+      ${champs.map(c => {
+        const cwr = c.winRate;
+        const cwrColor = cwr >= 60 ? '#4ade80' : cwr >= 50 ? '#a3e635'
+                       : cwr >= 40 ? '#fb923c' : '#f87171';
+        return `<div class="top-champ" title="${c.championName} · ${c.games}場 · ${cwr}%勝">
+          <img class="top-champ-img" src="${IMG_PH}" ${IMG_ERR} data-champid="${c.championId}" alt="${c.championName}">
+          <span class="top-champ-wr" style="color:${cwrColor}">${cwr}%</span>
+          <span class="top-champ-games">${c.games}場</span>
+        </div>`;
+      }).join('')}
+    </div>`;
+
   const selfClass  = isSelf  ? ' live-card-self'  : '';
   const enemyClass = isEnemy ? ' live-card-enemy' : '';
 
@@ -278,6 +295,7 @@ function _renderLiveCard(p) {
           <div class="flex items-center gap-2 flex-wrap">${nameHtml}${champTag}${badge}</div>
           ${rankHtml}
           ${statsHtml}
+          ${topChampsHtml}
         </div>
       </div>
     </div>`;

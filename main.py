@@ -185,7 +185,8 @@ def _aggregate_player_stats(puuid: str, count: int = 20) -> dict:
     無法取得資料時回傳全零字典。
     """
     zero = {"wins": 0, "total": 0, "winRate": 0.0,
-            "avgKills": 0.0, "avgDeaths": 0.0, "avgAssists": 0.0, "kda": 0.0}
+            "avgKills": 0.0, "avgDeaths": 0.0, "avgAssists": 0.0, "kda": 0.0,
+            "topChampions": []}
     if not puuid:
         return zero
 
@@ -201,6 +202,7 @@ def _aggregate_player_stats(puuid: str, count: int = 20) -> dict:
             pass
 
     wins = kills = deaths = assists = cnt = 0
+    champ_stats: dict[int, dict] = {}  # championId -> {games, wins}
     for g in games:
         if g.get("gameDuration", 999) < 240:
             continue
@@ -220,21 +222,49 @@ def _aggregate_player_stats(puuid: str, count: int = 20) -> dict:
         stats = pdata.get("stats") or pdata
         if stats.get("win") is None and stats.get("kills") is None:
             continue
+        won      = bool(stats.get("win"))
         cnt     += 1
-        wins    += 1 if stats.get("win") else 0
+        wins    += 1 if won else 0
         kills   += stats.get("kills",   0)
         deaths  += stats.get("deaths",  0)
         assists += stats.get("assists", 0)
 
+        # 統計每個英雄的場次與勝場（championId 在 pdata 頂層）
+        ch_id = pdata.get("championId") or stats.get("championId") or 0
+        if ch_id:
+            cs = champ_stats.setdefault(ch_id, {"games": 0, "wins": 0})
+            cs["games"] += 1
+            cs["wins"]  += 1 if won else 0
+
     if cnt > 0:
+        # 拿手英雄 Top3：≥2 場優先（先比場次再比勝率），不足 3 個再用 1 場的補滿
+        ranked = sorted(
+            champ_stats.items(),
+            key=lambda kv: (kv[1]["games"], kv[1]["wins"] / kv[1]["games"]),
+            reverse=True,
+        )
+        multi = [c for c in ranked if c[1]["games"] >= 2]
+        single = [c for c in ranked if c[1]["games"] < 2]
+        top_champs = (multi + single)[:3]
+        top_champions = [
+            {
+                "championId":   cid,
+                "championName": _get_champ_name(cid),
+                "games":        cs["games"],
+                "wins":         cs["wins"],
+                "winRate":      round(cs["wins"] / cs["games"] * 100, 1),
+            }
+            for cid, cs in top_champs
+        ]
         return {
-            "wins":       wins,
-            "total":      cnt,
-            "winRate":    round(wins / cnt * 100, 1),
-            "avgKills":   round(kills   / cnt, 1),
-            "avgDeaths":  round(deaths  / cnt, 1),
-            "avgAssists": round(assists / cnt, 1),
-            "kda":        round((kills + assists) / max(deaths, 1), 2),
+            "wins":         wins,
+            "total":        cnt,
+            "winRate":      round(wins / cnt * 100, 1),
+            "avgKills":     round(kills   / cnt, 1),
+            "avgDeaths":    round(deaths  / cnt, 1),
+            "avgAssists":   round(assists / cnt, 1),
+            "kda":          round((kills + assists) / max(deaths, 1), 2),
+            "topChampions": top_champions,
         }
     return zero
 
@@ -353,6 +383,7 @@ def _scan_lobby_sync(my_team: list):
                 "tierText":    "未排位",
                 "rankWins":    0, "rankLosses": 0,
                 "rankWinRate": 0.0, "lp": 0,
+                "topChampions": [],
                 "error":       False,
             }
 
@@ -590,6 +621,7 @@ def _scan_ingame_sync():
                 "tierText":    "未排位",
                 "rankWins":    0, "rankLosses": 0,
                 "rankWinRate": 0.0, "lp": 0,
+                "topChampions": [],
                 "error": False,
             }
 
