@@ -622,14 +622,16 @@ function setStatusOffline() {
 }
 
 // ── 打字機效果 ──────────────────────────────────────────────────────────
+const _typewriteTimers = {};
 function typewrite(id, text, className) {
   const el = document.getElementById(id);
   el.className   = className;
   el.textContent = '';
+  if (_typewriteTimers[id]) clearInterval(_typewriteTimers[id]);
   let i = 0;
-  const iv = setInterval(() => {
+  _typewriteTimers[id] = setInterval(() => {
     if (i < text.length) { el.textContent += text[i++]; }
-    else clearInterval(iv);
+    else { clearInterval(_typewriteTimers[id]); delete _typewriteTimers[id]; }
   }, 35);
 }
 

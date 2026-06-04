@@ -56,7 +56,7 @@ _EMPTY_PUUID = '00000000-0000-0000-0000-000000000000'  # 空位/匿名槽特徵 
 # 本地戰績快取路徑（data/ 已在 .gitignore，個人數據不上傳）
 _MATCH_CACHE_FILE = os.path.join(os.path.dirname(__file__), "data", "match_history_cache.json")
 
-# SGP 各區域 matchHistory base URL（來源：LeagueAkari/resources/builtin-config/sgp/league-servers.json）
+# SGP 各區域 URL（來源：LeagueAkari/resources/builtin-config/sgp/league-servers.json）
 _SGP_MATCH_HISTORY_URLS: dict[str, str] = {
     "TW2":  "https://apse1-red.pp.sgp.pvp.net",
     "SG2":  "https://apse1-red.pp.sgp.pvp.net",
@@ -76,9 +76,30 @@ _SGP_MATCH_HISTORY_URLS: dict[str, str] = {
     "TR1":  "https://euc1-red.pp.sgp.pvp.net",
 }
 
+# summoner-ledge common URL（查匿名玩家名稱用）
+_SGP_COMMON_URLS: dict[str, str] = {
+    "TW2":  "https://tw2-red.lol.sgp.pvp.net",
+    "SG2":  "https://sg2-red.lol.sgp.pvp.net",
+    "PH2":  "https://ph2-red.lol.sgp.pvp.net",
+    "VN2":  "https://vn2-red.lol.sgp.pvp.net",
+    "TH2":  "https://th2-red.lol.sgp.pvp.net",
+    "OC1":  "https://oc1-red.lol.sgp.pvp.net",
+    "KR":   "https://kr-red.lol.sgp.pvp.net",
+    "JP1":  "https://jp1-red.lol.sgp.pvp.net",
+    "NA1":  "https://na1-red.lol.sgp.pvp.net",
+    "LA1":  "https://la1-red.lol.sgp.pvp.net",
+    "LA2":  "https://la2-red.lol.sgp.pvp.net",
+    "BR1":  "https://br1-red.lol.sgp.pvp.net",
+    "EUW1": "https://euw1-red.lol.sgp.pvp.net",
+    "EUNE1":"https://eune1-red.lol.sgp.pvp.net",
+    "RU":   "https://ru-red.lol.sgp.pvp.net",
+    "TR1":  "https://tr1-red.lol.sgp.pvp.net",
+}
+
 # 在 initialize() 時填入
-_platform_id       = ''   # 例如 "TW2"
-_entitlement_token = ''   # Riot Entitlements JWT（SGP 認證用）
+_platform_id          = ''   # 例如 "TW2"
+_entitlement_token    = ''   # Riot Entitlements JWT（SGP matchHistory 用）
+_league_session_token = ''   # League Session Token（SGP summoner-ledge 用）
 
 # ── Helper ─────────────────────────────────────────────────────────────
 _log_file = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "debug.log"), "a", encoding="utf-8", buffering=1)
@@ -91,6 +112,47 @@ def _log(msg: str):
         eel.append_log(msg)()
     except Exception:
         print(f"[LOG] {msg}")
+
+
+def _sgp_get_summoner_names(puuids: list[str]) -> dict[str, str]:
+    """用 SGP summoner-ledge API 批次查詢玩家名稱，可繞過 LCU 匿名限制。
+    回傳 {puuid: gameName} dict，失敗回傳空 dict。
+    """
+    pid = (_platform_id or "").upper()
+    common_base = _SGP_COMMON_URLS.get(pid)
+    if not common_base or not puuids:
+        return {}
+    # 每次使用前重新拿 token（避免過期）
+    try:
+        fresh_token = _client.get("/lol-league-session/v1/league-session-token") or ""
+    except Exception:
+        fresh_token = _league_session_token
+    if not fresh_token:
+        return {}
+    region = pid.lower()
+    url = f"{common_base}/summoner-ledge/v1/regions/{region}/summoners/puuids"
+    try:
+        resp = requests.post(
+            url,
+            json=puuids,
+            headers={"Authorization": f"Bearer {fresh_token}"},
+            verify=False,
+            timeout=5,
+        )
+        resp.raise_for_status()
+        result = {}
+        for s in resp.json():
+            pu   = s.get("puuid", "")
+            # SgpSummoner 的名稱欄位是 "name"（非 gameName/displayName）
+            name = (s.get("name") or s.get("gameName") or
+                    s.get("displayName") or "").strip()
+            if pu and name:
+                result[pu] = name
+        _log(f"SGP_SUMMONER >> {len(result)}/{len(puuids)} 筆名稱查回")
+        return result
+    except Exception as e:
+        _log(f"SGP_SUMMONER >> 失敗: {e}")
+        return {}
 
 
 def _fetch_player_games_sgp(puuid: str, count: int = 20) -> list:
@@ -354,133 +416,138 @@ def _maybe_trigger_ingame_scan():
 
 
 def _scan_ingame_sync():
-    """背景執行緒：反匿名擊穿協議。
-    優先 coregame 底層端點（不受匿名遮罩），備援 gameflow session；
-    確保 10 人雷達不漏人，即使匿名玩家也強制顯示戰力數據。
+    """背景執行緒：10 人雷達掃描。
+    主要來源：gameflow session teamOne/teamTwo（已按隊伍分好，最可靠）。
+    補充來源：coregame session（提供 championId 等額外欄位）。
     """
     global _ingame_scan_in_progress
     try:
-        _log("INGAME_SCAN >> 反匿名擊穿協議啟動...")
-        all_raw: list[dict] = []
-        source = ""
+        _log("INGAME_SCAN >> 啟動...")
 
-        # ═══ 底層端點 1：coregame（最低層，通常保留真實 PUUID）═══════════════
+        # ═══ 主要來源：gameflow（一次 API call，隊伍已分好）════════════════════
+        t1_raw: list[dict] = []
+        t2_raw: list[dict] = []
+        _gf_name_cache: dict[str, str] = {}
         try:
-            cg         = _client.get("/lol-coregame/v1/session")
-            cg_players = cg.get("players", [])
-            if cg_players:
-                all_raw = list(cg_players)
-                source  = "coregame"
-                _log(f"INGAME_SCAN >> [coregame] 擊穿成功，{len(all_raw)} 位玩家就位")
-                # 診斷：記錄第一位玩家的所有 key 以確認欄位結構
-                if all_raw:
-                    sample_keys = list(all_raw[0].keys())
-                    _log(f"INGAME_SCAN >> coregame 玩家欄位樣本: {sample_keys}")
+            gf      = _client.get("/lol-gameflow/v1/session")
+            gd      = gf.get("gameData", {})
+            t1_raw  = [p for p in gd.get("teamOne", []) if p.get("puuid")]
+            t2_raw  = [p for p in gd.get("teamTwo", []) if p.get("puuid")]
+            _log(f"INGAME_SCAN >> [gameflow] teamOne={len(t1_raw)} teamTwo={len(t2_raw)}")
+
+            # playerChampionSelections 補回 teamOne/teamTwo 漏掉的玩家
+            # （CHERRY/大混戰等模式 teamOne/teamTwo 可能不完整）
+            pcs = gd.get("playerChampionSelections", [])
+            if pcs:
+                known = {p["puuid"] for p in t1_raw + t2_raw if p.get("puuid")}
+                extra = [p for p in pcs
+                         if p.get("puuid") and p["puuid"] != _EMPTY_PUUID
+                         and p["puuid"] not in known]
+                if extra:
+                    _log(f"INGAME_SCAN >> playerChampionSelections 補入 {len(extra)} 位缺漏玩家")
+                    # 按隊伍人數平均分配
+                    for p in extra:
+                        if len(t1_raw) <= len(t2_raw):
+                            t1_raw.append(p)
+                        else:
+                            t2_raw.append(p)
+                    _log(f"INGAME_SCAN >> 補後 teamOne={len(t1_raw)} teamTwo={len(t2_raw)}")
+            # 同步建立名稱快取（供後續 _scan_one 補名用，跳過空位槽）
+            for gp in t1_raw + t2_raw:
+                pu   = gp.get("puuid", "")
+                if pu == _EMPTY_PUUID:
+                    continue
+                real = (gp.get("summonerName") or gp.get("gameName") or
+                        gp.get("displayName")  or gp.get("riotId")   or
+                        gp.get("name") or "").strip()
+                if real:
+                    _gf_name_cache[pu] = real
+            _log(f"INGAME_SCAN >> 名稱快取 {len(_gf_name_cache)}/{len(t1_raw)+len(t2_raw)} 筆")
+
+            # 沒有名稱的玩家用 SGP summoner-ledge 批次補齊
+            missing = [p["puuid"] for p in t1_raw + t2_raw
+                       if p.get("puuid") and p["puuid"] != _EMPTY_PUUID
+                       and p["puuid"] not in _gf_name_cache]
+            if missing:
+                sgp_names = _sgp_get_summoner_names(missing)
+                _gf_name_cache.update(sgp_names)
         except Exception as e:
-            _log(f"INGAME_SCAN >> [coregame] 無回應: {e}")
+            _log(f"INGAME_SCAN >> [gameflow] 失敗: {e}")
 
-        # ═══ 備援端點 2：gameflow session ════════════════════════════════════
-        if not all_raw:
-            try:
-                gf       = _client.get("/lol-gameflow/v1/session")
-                gd       = gf.get("gameData", {})
-                t1, t2   = gd.get("teamOne", []), gd.get("teamTwo", [])
-                for p in t1:
-                    p["_rawTeam"] = 100
-                for p in t2:
-                    p["_rawTeam"] = 200
-                all_raw = t1 + t2
-                source  = "gameflow"
-                _log(f"INGAME_SCAN >> [gameflow] 備援，{len(all_raw)} 位玩家")
-            except Exception as e:
-                _log(f"INGAME_SCAN >> [gameflow] 也失敗: {e}")
-
-        if not all_raw:
-            _log("INGAME_SCAN >> 所有端點均無玩家資料，放棄掃描")
+        if not t1_raw and not t2_raw:
+            _log("INGAME_SCAN >> gameflow 無玩家資料，放棄掃描")
             return
 
-        # ═══ 統一隊伍 ID（相容 coregame ORDER/CHAOS、TEAM_100/200、整數）══
-        def _tid(p: dict) -> int:
-            raw = p.get("teamId") or p.get("_rawTeam", 0)
-            if raw in (100, 200):
-                return int(raw)
-            s = str(raw or p.get("team", "") or "").upper()
-            if "100" in s or "ORDER" in s:
-                return 100
-            if "200" in s or "CHAOS" in s:
-                return 200
-            return 0
-
-        # ═══ 用 gameflow 建立 puuid→team 對照表（最可靠的隊伍來源）══════════
-        _gf_tid_map: dict[str, int] = {}
-        try:
-            gf_tid = _client.get("/lol-gameflow/v1/session")
-            gd_tid = gf_tid.get("gameData", {})
-            for pp in gd_tid.get("teamOne", []):
-                if pp.get("puuid") and pp["puuid"] != _EMPTY_PUUID:
-                    _gf_tid_map[pp["puuid"]] = 100
-            for pp in gd_tid.get("teamTwo", []):
-                if pp.get("puuid") and pp["puuid"] != _EMPTY_PUUID:
-                    _gf_tid_map[pp["puuid"]] = 200
-            _log(f"INGAME_SCAN >> GF隊伍對照表 {len(_gf_tid_map)} 筆")
-        except Exception as e:
-            _log(f"INGAME_SCAN >> GF隊伍對照表失敗: {e}")
-
-        def _tid_final(p: dict) -> int:
-            puuid = p.get("puuid", "")
-            if puuid and puuid in _gf_tid_map:
-                return _gf_tid_map[puuid]
-            return _tid(p)
-
-        # ═══ 確認自己所在隊伍 ═════════════════════════════════════════════════
+        # ═══ 確認自己在哪隊 ═══════════════════════════════════════════════════
         my_tid = 0
-        for p in all_raw:
+        for p in t1_raw:
             if p.get("puuid") == _puuid:
-                my_tid = _tid_final(p); break
-
+                my_tid = 100; break
         if not my_tid:
-            my_tid = _gf_tid_map.get(_puuid, 0)
-
+            for p in t2_raw:
+                if p.get("puuid") == _puuid:
+                    my_tid = 200; break
         if not my_tid:
-            my_tid = 100  # 最後保底
+            my_tid = 100  # 保底
 
-        # 診斷：記錄每位玩家的 teamId 原始值
-        for p in all_raw:
-            raw_tid = p.get("teamId") or p.get("_rawTeam", "N/A")
-            resolved = _tid_final(p)
-            puuid_tail = (p.get("puuid") or "")[-6:] or "N/A"
-            _log(f"INGAME_SCAN >> 玩家 puuid=...{puuid_tail} teamId={raw_tid!r} → {resolved}")
+        if my_tid == 100:
+            my_raw, enemy_raw = list(t1_raw), list(t2_raw)
+        else:
+            my_raw, enemy_raw = list(t2_raw), list(t1_raw)
 
-        my_raw    = [p for p in all_raw if _tid_final(p) == my_tid]
-        # 無法判斷隊伍(0)的玩家歸入敵方，確保不漏人
-        enemy_raw = [p for p in all_raw if _tid_final(p) != my_tid]
-        _log(f"INGAME_SCAN >> 我方 {len(my_raw)} + 敵方 {len(enemy_raw)}（來源: {source}）")
+        # ═══ 補充來源：coregame（補 championId，並補回 EMPTY_PUUID 的真實玩家）══
+        def _fetch_coregame(retry: bool = False) -> dict:
+            """回傳 puuid→player dict，失敗回傳空 dict。"""
+            try:
+                cg = _client.get("/lol-coregame/v1/session")
+                result = {p["puuid"]: p for p in cg.get("players", [])
+                          if p.get("puuid") and p["puuid"] != _EMPTY_PUUID}
+                _log(f"INGAME_SCAN >> [coregame] {'重試' if retry else ''}補充資料 {len(result)} 筆")
+                return result
+            except Exception as e:
+                _log(f"INGAME_SCAN >> [coregame] {'重試' if retry else ''}無回應: {e}")
+                return {}
 
-        # ═══ 預抓 gameflow 名稱快取 ══════════════════════════════════════════
-        # InProgress 階段 gameflow teamOne/teamTwo 一定含真實玩家名稱，
-        # 用來補齊 coregame 中匿名玩家的空 summonerName。
-        _gf_name_cache: dict = {}
-        try:
-            gf_data = _client.get("/lol-gameflow/v1/session")
-            gd      = gf_data.get("gameData", {})
-            gf_all  = gd.get("teamOne", []) + gd.get("teamTwo", [])
-            _log(f"INGAME_SCAN >> gameflow teamOne+teamTwo 共 {len(gf_all)} 筆原始資料")
-            for gp in gf_all:
-                gp_puuid = (gp.get("puuid") or "").strip()
-                if not gp_puuid or gp_puuid == _EMPTY_PUUID:
-                    continue
-                # 診斷：記錄各欄位是否有值（不記錄實際名稱以保護隱私）
-                has = {k: bool((gp.get(k) or "").strip())
-                       for k in ("summonerName","gameName","displayName","riotId","name","internalName")}
-                real = (gp.get("summonerName") or gp.get("gameName") or
-                        gp.get("displayName")   or gp.get("riotId")  or
-                        gp.get("name") or "").strip()
-                _log(f"INGAME_SCAN >> GF玩家 puuid=...{gp_puuid[-6:]} 名稱欄位={has} found={bool(real)}")
-                if real:
-                    _gf_name_cache[gp_puuid] = real
-            _log(f"INGAME_SCAN >> gameflow 名稱快取 {len(_gf_name_cache)}/{len(gf_all)} 筆")
-        except Exception as e:
-            _log(f"INGAME_SCAN >> gameflow 名稱快取失敗: {e}")
+        cg_map = _fetch_coregame()
+
+        # 若人數不足 10 且 coregame 沒資料（GameStart 時常見），最多等 15 秒
+        total = len(my_raw) + len(enemy_raw)
+        if total < 10 and not cg_map:
+            for wait_sec in (3, 3, 3, 6):
+                _log(f"INGAME_SCAN >> 人數不足，等待 coregame 就緒（{wait_sec}s）...")
+                time.sleep(wait_sec)
+                cg_map = _fetch_coregame(retry=True)
+                if cg_map:
+                    break
+
+        # 用 coregame 補回 gameflow 中 EMPTY_PUUID 的真實玩家
+        if cg_map:
+            known_puuids = {p.get("puuid", "") for p in my_raw + enemy_raw
+                            if p.get("puuid") and p["puuid"] != _EMPTY_PUUID}
+            for pu, cg_p in cg_map.items():
+                if pu not in known_puuids:
+                    # 判斷補入哪隊（以目前人數較少的隊為準）
+                    if len(my_raw) < 5:
+                        my_raw.append(cg_p)
+                    elif len(enemy_raw) < 5:
+                        enemy_raw.append(cg_p)
+                    known_puuids.add(pu)
+                    _log(f"INGAME_SCAN >> coregame 補回缺漏玩家 puuid=...{pu[-6:]}")
+
+        def _merge_cg(p: dict) -> dict:
+            cg_p = cg_map.get(p.get("puuid", ""), {})
+            if not cg_p:
+                return p
+            merged = dict(p)
+            for k, v in cg_p.items():
+                if k not in merged or not merged[k]:
+                    merged[k] = v
+            return merged
+
+        my_raw    = [_merge_cg(p) for p in my_raw]
+        enemy_raw = [_merge_cg(p) for p in enemy_raw]
+
+        _log(f"INGAME_SCAN >> 我方 {len(my_raw)} + 敵方 {len(enemy_raw)}")
 
         def _scan_one(p: dict) -> dict:
             puuid    = p.get("puuid", "") or ""
@@ -796,7 +863,7 @@ def _load_rank_emblem_cache():
 # ── Exposed to JS ──────────────────────────────────────────────────────
 @eel.expose
 def initialize():
-    global _client, _puuid, _account_id, _platform_id, _entitlement_token
+    global _client, _puuid, _account_id, _platform_id, _entitlement_token, _league_session_token
     _log("SYS >> Initializing connection to League Client...")
     try:
         _client     = LCUClient()
@@ -838,6 +905,12 @@ def initialize():
             _log(f"SGP_TOKEN >> {'OK' if _entitlement_token else 'EMPTY'} (len={len(_entitlement_token)})")
         except Exception:
             _entitlement_token = ""
+
+        try:
+            _league_session_token = _client.get("/lol-league-session/v1/league-session-token") or ""
+            _log(f"SGP_SESSION_TOKEN >> {'OK' if _league_session_token else 'EMPTY'} (len={len(_league_session_token)})")
+        except Exception:
+            _league_session_token = ""
 
         _log(f"OPERATOR_PROFILE >> loaded: {full} // LVL {lvl} // ICON {icon_id}")
         _load_champ_summary()
@@ -1694,7 +1767,20 @@ def _handle_gameflow_phase(phase):
         _last_scanned_team_key = ""
 
     # ── 嚴格 phase 路由 ──────────────────────────────────────────────────
-    if phase in ("GameStart", "InProgress"):
+    if phase == "ReadyCheck":
+        # gameflow 進入 ReadyCheck 即直接嘗試接受（比 matchmaking WS 事件更可靠）
+        if _auto_accept:
+            try:
+                _client.post("/lol-matchmaking/v1/ready-check/accept", json={})
+                _log("AUTO_ACCEPT >> match ACCEPTED via gameflow phase ✓")
+                try:
+                    eel.on_match_accepted()()
+                except Exception:
+                    pass
+            except Exception as e:
+                _log(f"ACCEPT_ERR >> {e}")
+
+    elif phase in ("GameStart", "InProgress"):
         # GameStart = 遊戲載入畫面；InProgress = 遊戲進行中；兩者皆可啟動雷達
         # （GameStart 時 gameflow session 已有完整 10 人資料，可提前掃描）
         try:
