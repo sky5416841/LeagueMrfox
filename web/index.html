@@ -9,14 +9,27 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=15">
 </head>
-<body class="bg-[#020617] h-screen overflow-hidden select-none">
+<body class="bg-[#020617] h-screen overflow-hidden select-none flex flex-col">
 
 <div id="accept-flash"></div>
 
+<!-- ══ 自訂標題列（無邊框視窗用）══ -->
+<div id="titlebar" class="pywebview-drag-region">
+  <div class="titlebar-left">
+    <img src="avatar.png?v=2" class="titlebar-icon" alt="">
+    <span class="titlebar-title">LeagueMrfox</span>
+    <span class="titlebar-ver">v1.1</span>
+  </div>
+  <div class="titlebar-controls">
+    <button class="titlebar-btn" id="tb-min" title="最小化">&#x2013;</button>
+    <button class="titlebar-btn titlebar-close" id="tb-close" title="關閉">&#x2715;</button>
+  </div>
+</div>
+
 <!-- ── 根佈局：側邊欄 + 主內容 ── -->
-<div class="scanlines h-full flex">
+<div class="scanlines flex-1 min-h-0 flex">
 
   <!-- ══ 側邊導覽欄 ══ -->
   <aside class="sidebar flex flex-col shrink-0">
@@ -410,6 +423,6 @@
   </div>
 </div>
 
-<script src="app.js"></script>
+<script src="app.js?v=15"></script>
 </body>
 </html>

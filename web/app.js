@@ -2,7 +2,7 @@
 
 // Tailwind CDN 會在 body 注入浮水印徽章，偵測並移除非己方元素
 (function removeCdnBadge() {
-  const ours = new Set(['accept-flash', 'game-modal']);
+  const ours = new Set(['accept-flash', 'game-modal', 'titlebar']);
   function sweep() {
     document.querySelectorAll('body > div').forEach(el => {
       if (ours.has(el.id) || el.classList.contains('scanlines')) return;
@@ -240,6 +240,13 @@ function _renderLiveCard(p) {
     ? `<span class="text-[9px] text-slate-600 tracking-wider">[${p.championName}]</span>`
     : '';
 
+  // 連勝/連敗徽章（3 連以上才顯示，才有參考價值）
+  const streakHtml = (!noData && p.streakCount >= 3)
+    ? (p.streakType === 'win'
+        ? `<span class="streak-badge streak-win">🔥 ${p.streakCount}連勝</span>`
+        : `<span class="streak-badge streak-lose">❄️ ${p.streakCount}連敗</span>`)
+    : '';
+
   // 戰績區（匿名玩家只要有 PUUID 資料就照樣顯示，不隱藏）
   const statsHtml = (isAnon && noData) ? '<div class="text-[10px] text-slate-500 italic">— 匿名 · 無資料 —</div>'
     : noData
@@ -292,7 +299,7 @@ function _renderLiveCard(p) {
       <div class="flex items-center gap-3">
         ${iconHtml}
         <div class="flex-1 min-w-0">
-          <div class="flex items-center gap-2 flex-wrap">${nameHtml}${champTag}${badge}</div>
+          <div class="flex items-center gap-2 flex-wrap">${nameHtml}${champTag}${streakHtml}${badge}</div>
           ${rankHtml}
           ${statsHtml}
           ${topChampsHtml}
@@ -1179,6 +1186,12 @@ async function doReconnect() {
 // ── 初始化 ─────────────────────────────────────────────────────────────
 window.addEventListener('load', async () => {
   append_log('SYS >> LeagueMrfox V1.1 初始化完成');
+
+  // 自訂標題列按鈕
+  const tbMin = document.getElementById('tb-min');
+  const tbClose = document.getElementById('tb-close');
+  if (tbMin)   tbMin.addEventListener('click',   () => eel.window_minimize()());
+  if (tbClose) tbClose.addEventListener('click', () => eel.window_close()());
 
   document.getElementById('items-per-page').addEventListener('change', function () {
     itemsPerPage = parseInt(this.value, 10);

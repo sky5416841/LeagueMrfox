@@ -5,6 +5,63 @@ body, input, button, textarea {
   font-family: 'Share Tech Mono', 'Consolas', 'Courier New', monospace;
 }
 
+/* ── 自訂標題列（無邊框視窗）────────────────────────────────────── */
+#titlebar {
+  height: 32px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #020a14;
+  border-bottom: 1px solid rgba(6,182,212,0.15);
+  padding: 0 0 0 12px;
+  user-select: none;
+}
+.titlebar-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.titlebar-icon {
+  width: 16px;
+  height: 16px;
+  border-radius: 2px;
+}
+.titlebar-title {
+  font-size: 11px;
+  letter-spacing: 2px;
+  color: #67e8f9;
+  text-shadow: 0 0 8px rgba(103,232,249,0.4);
+}
+.titlebar-ver {
+  font-size: 9px;
+  color: rgba(100,116,139,0.7);
+}
+.titlebar-controls {
+  display: flex;
+  height: 100%;
+  /* 按鈕區不可拖曳，避免點不到 */
+  -webkit-app-region: no-drag;
+}
+.titlebar-btn {
+  width: 44px;
+  height: 100%;
+  border: none;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background .15s, color .15s;
+}
+.titlebar-btn:hover {
+  background: rgba(6,182,212,0.12);
+  color: #e2e8f0;
+}
+.titlebar-close:hover {
+  background: #dc2626;
+  color: #fff;
+}
+
 /* ── Sidebar ──────────────────────────────────────────────────────── */
 .sidebar {
   width: 250px;
@@ -932,6 +989,26 @@ body, input, button, textarea {
 .top-champ-games {
   font-size: 8px;
   color: rgba(100,116,139,0.8);
+}
+
+/* ── 連勝/連敗徽章 ──────────────────────────────────────────────── */
+.streak-badge {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 3px;
+  letter-spacing: 1px;
+  white-space: nowrap;
+}
+.streak-win {
+  color: #fb923c;
+  background: rgba(251,146,60,0.12);
+  border: 1px solid rgba(251,146,60,0.35);
+}
+.streak-lose {
+  color: #60a5fa;
+  background: rgba(96,165,250,0.12);
+  border: 1px solid rgba(96,165,250,0.35);
 }
 
 /* ── InGame 10-player dual-panel ─────────────────────────────────── */
