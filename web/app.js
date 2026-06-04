@@ -247,6 +247,12 @@ function _renderLiveCard(p) {
         : `<span class="streak-badge streak-lose">❄️ ${p.streakCount}連敗</span>`)
     : '';
 
+  // 開黑組標記（同組同色，最多 5 組循環配色）
+  const grp = p.premadeGroup || 0;
+  const premadeHtml = grp > 0
+    ? `<span class="premade-badge premade-${grp}" title="開黑組 ${grp}">👥${grp}</span>`
+    : '';
+
   // 戰績區（匿名玩家只要有 PUUID 資料就照樣顯示，不隱藏）
   const statsHtml = (isAnon && noData) ? '<div class="text-[10px] text-slate-500 italic">— 匿名 · 無資料 —</div>'
     : noData
@@ -283,6 +289,15 @@ function _renderLiveCard(p) {
       }).join('')}
     </div>`;
 
+  // 近期表現趨勢（近 5 場 W/L 方塊，綠勝紅敗）
+  const rg = p.recentGames || [];
+  const trendHtml = (noData || rg.length === 0) ? '' : `
+    <div class="recent-trend">
+      <span class="recent-trend-label">近期</span>
+      ${rg.map(g => `<span class="trend-box ${g.win ? 'trend-win' : 'trend-lose'}"
+          title="${g.win ? '勝' : '負'} · ${g.k}/${g.d}/${g.a} · KDA ${g.kda}">${g.win ? 'W' : 'L'}</span>`).join('')}
+    </div>`;
+
   const selfClass  = isSelf  ? ' live-card-self'  : '';
   const enemyClass = isEnemy ? ' live-card-enemy' : '';
 
@@ -299,10 +314,10 @@ function _renderLiveCard(p) {
       <div class="flex items-center gap-3">
         ${iconHtml}
         <div class="flex-1 min-w-0">
-          <div class="flex items-center gap-2 flex-wrap">${nameHtml}${champTag}${streakHtml}${badge}</div>
+          <div class="flex items-center gap-2 flex-wrap">${nameHtml}${champTag}${premadeHtml}${streakHtml}${badge}</div>
           ${rankHtml}
           ${statsHtml}
-          ${topChampsHtml}
+          ${(topChampsHtml || trendHtml) ? `<div class="card-extra-row">${topChampsHtml}${trendHtml}</div>` : ''}
         </div>
       </div>
     </div>`;
@@ -1185,7 +1200,7 @@ async function doReconnect() {
 
 // ── 初始化 ─────────────────────────────────────────────────────────────
 window.addEventListener('load', async () => {
-  append_log('SYS >> LeagueMrfox V1.1 初始化完成');
+  append_log('SYS >> LeagueMrfox V1.2 初始化完成');
 
   // 自訂標題列按鈕
   const tbMin = document.getElementById('tb-min');

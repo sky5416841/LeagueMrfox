@@ -889,7 +889,7 @@ body, input, button, textarea {
   background: rgba(2,10,20,0.55);
   border: 1px solid rgba(6,182,212,0.07);
   border-radius: 3px;
-  padding: 8px 12px;
+  padding: 6px 12px;
   transition: border-color .2s;
 }
 .live-card:hover {
@@ -953,12 +953,20 @@ body, input, button, textarea {
   background: #0a1628;
 }
 
+/* 拿手 + 近期 併排容器（省高度）*/
+.card-extra-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin-top: 4px;
+}
+
 /* ── 拿手英雄 Top3 ──────────────────────────────────────────────── */
 .top-champs {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-top: 5px;
 }
 .top-champs-label {
   font-size: 8px;
@@ -1010,6 +1018,53 @@ body, input, button, textarea {
   background: rgba(96,165,250,0.12);
   border: 1px solid rgba(96,165,250,0.35);
 }
+
+/* ── 近期表現趨勢 ──────────────────────────────────────────────── */
+.recent-trend {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.recent-trend-label {
+  font-size: 8px;
+  letter-spacing: 2px;
+  color: rgba(148,163,184,0.5);
+}
+.trend-box {
+  width: 15px;
+  height: 15px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  font-weight: 700;
+  border-radius: 2px;
+}
+.trend-win {
+  color: #4ade80;
+  background: rgba(74,222,128,0.15);
+  border: 1px solid rgba(74,222,128,0.4);
+}
+.trend-lose {
+  color: #f87171;
+  background: rgba(248,113,113,0.15);
+  border: 1px solid rgba(248,113,113,0.4);
+}
+
+/* ── 開黑組標記（同組同色）──────────────────────────────────────── */
+.premade-badge {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 3px;
+  letter-spacing: 1px;
+  white-space: nowrap;
+}
+.premade-1 { color:#c084fc; background:rgba(192,132,252,0.15); border:1px solid rgba(192,132,252,0.45); }
+.premade-2 { color:#facc15; background:rgba(250,204,21,0.15);  border:1px solid rgba(250,204,21,0.45); }
+.premade-3 { color:#2dd4bf; background:rgba(45,212,191,0.15);  border:1px solid rgba(45,212,191,0.45); }
+.premade-4 { color:#fb7185; background:rgba(251,113,133,0.15); border:1px solid rgba(251,113,133,0.45); }
+.premade-5 { color:#38bdf8; background:rgba(56,189,248,0.15);  border:1px solid rgba(56,189,248,0.45); }
 
 /* ── InGame 10-player dual-panel ─────────────────────────────────── */
 .ingame-panel {

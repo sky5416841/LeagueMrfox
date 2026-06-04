@@ -187,7 +187,8 @@ def _aggregate_player_stats(puuid: str, count: int = 20) -> dict:
     """
     zero = {"wins": 0, "total": 0, "winRate": 0.0,
             "avgKills": 0.0, "avgDeaths": 0.0, "avgAssists": 0.0, "kda": 0.0,
-            "topChampions": [], "streakType": "", "streakCount": 0}
+            "topChampions": [], "streakType": "", "streakCount": 0,
+            "recentGames": []}
     if not puuid:
         return zero
 
@@ -205,6 +206,7 @@ def _aggregate_player_stats(puuid: str, count: int = 20) -> dict:
     wins = kills = deaths = assists = cnt = 0
     champ_stats: dict[int, dict] = {}  # championId -> {games, wins}
     results: list[bool] = []  # 勝負序列（最新在前），用於計算連勝/連敗
+    recent_games: list[dict] = []  # 近期單場記錄（最新在前），用於趨勢小圖
     for g in games:
         if g.get("gameDuration", 999) < 240:
             continue
@@ -225,12 +227,20 @@ def _aggregate_player_stats(puuid: str, count: int = 20) -> dict:
         if stats.get("win") is None and stats.get("kills") is None:
             continue
         won      = bool(stats.get("win"))
+        k = stats.get("kills", 0); d = stats.get("deaths", 0); a = stats.get("assists", 0)
         cnt     += 1
         wins    += 1 if won else 0
         results.append(won)
-        kills   += stats.get("kills",   0)
-        deaths  += stats.get("deaths",  0)
-        assists += stats.get("assists", 0)
+        kills   += k
+        deaths  += d
+        assists += a
+        # 近期單場記錄（最新在前），用於趨勢小圖
+        recent_games.append({
+            "win": won,
+            "championId": pdata.get("championId") or stats.get("championId") or 0,
+            "kda": round((k + a) / max(d, 1), 2),
+            "k": k, "d": d, "a": a,
+        })
 
         # 統計每個英雄的場次與勝場（championId 在 pdata 頂層）
         ch_id = pdata.get("championId") or stats.get("championId") or 0
@@ -282,6 +292,7 @@ def _aggregate_player_stats(puuid: str, count: int = 20) -> dict:
             "topChampions": top_champions,
             "streakType":   streak_type,
             "streakCount":  streak_count,
+            "recentGames":  recent_games[:5],
         }
     return zero
 
@@ -402,6 +413,7 @@ def _scan_lobby_sync(my_team: list):
                 "rankWinRate": 0.0, "lp": 0,
                 "topChampions": [],
                 "streakType": "", "streakCount": 0,
+                "recentGames": [],
                 "error":       False,
             }
 
@@ -453,6 +465,24 @@ def _scan_lobby_sync(my_team: list):
             _log(f"LOBBY_SCAN_EEL_ERR >> {e}")
     finally:
         _lobby_scan_in_progress = False
+
+
+def _mark_premade_groups(team: list[dict]):
+    """依 teamParticipantId 標記同隊開黑組。
+    同一 teamParticipantId 且人數 >= 2 視為一組，依序給組別編號 1, 2, ...
+    （LeagueAkari 技術：Riot 用 teamParticipantId 標記預組隊伍）
+    """
+    groups: dict = {}
+    for p in team:
+        tpid = p.get("teamParticipantId") or 0
+        if tpid:
+            groups.setdefault(tpid, []).append(p)
+    group_no = 0
+    for tpid, members in groups.items():
+        if len(members) >= 2:        # 2 人以上才算開黑
+            group_no += 1
+            for p in members:
+                p["premadeGroup"] = group_no
 
 
 def _maybe_trigger_ingame_scan():
@@ -641,6 +671,9 @@ def _scan_ingame_sync():
                 "rankWinRate": 0.0, "lp": 0,
                 "topChampions": [],
                 "streakType": "", "streakCount": 0,
+                "recentGames": [],
+                "teamParticipantId": p.get("teamParticipantId") or 0,
+                "premadeGroup": 0,   # 0=單排；>0=同組編號（稍後分析填入）
                 "error": False,
             }
 
@@ -685,6 +718,8 @@ def _scan_ingame_sync():
 
         my_team    = [_scan_one(p) for p in my_raw]
         enemy_team = [_scan_one(p) for p in enemy_raw]
+        _mark_premade_groups(my_team)
+        _mark_premade_groups(enemy_team)
         _log(f"INGAME_SCAN >> 完成！{len(my_team)}+{len(enemy_team)} 人雷達就緒")
         try:
             eel.on_ingame_scan_ready({"myTeam": my_team, "enemyTeam": enemy_team})()

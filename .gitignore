@@ -21,3 +21,9 @@ run_log.txt
 
 # 本地除錯腳本
 bug/
+
+# 打包備份與暫存
+backup/
+err.txt
+dist/
+build/
