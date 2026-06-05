@@ -287,6 +287,10 @@ function _renderLiveCard(p) {
            KDA <span class="text-slate-400">${p.kda}</span>
            <span class="text-slate-700 ml-2">${p.avgKills}/${p.avgDeaths}/${p.avgAssists}</span>
          </div>
+         ${(p.killParticipation || p.damageShare) ? `<div class="text-[9px] text-slate-600">
+           <span title="參團率">參團 ${p.killParticipation}%</span>
+           <span class="ml-2" title="傷害佔比">傷害 ${p.damageShare}%</span>
+         </div>` : ''}
        </div>
        <div class="live-wr-bar mt-1">
          <div class="live-wr-fill" style="width:${wr}%;background:${wrColor}"></div>
@@ -1013,6 +1017,7 @@ function _buildMatchCard(m) {
       </div>
     </div>
     <div class="mc-mid">
+      ${m.grade ? `<span class="game-grade grade-${m.grade}" title="該場綜合評級">${m.grade}</span>` : ''}
       <div class="kda-block">
         <span class="k">${m.kills}</span><span class="sep">/</span>
         <span class="d">${m.deaths}</span><span class="sep">/</span>
@@ -1295,7 +1300,7 @@ async function doReconnect() {
 
 // ── 初始化 ─────────────────────────────────────────────────────────────
 window.addEventListener('load', async () => {
-  append_log('SYS >> LeagueMrfox V1.2 初始化完成');
+  append_log('SYS >> LeagueMrfox V1.3 初始化完成');
 
   // 自訂標題列按鈕
   const tbMin = document.getElementById('tb-min');

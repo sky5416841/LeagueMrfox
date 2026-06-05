@@ -1060,6 +1060,24 @@ body, input, button, textarea {
   letter-spacing: 1px;
   white-space: nowrap;
 }
+/* ── 該場評級 S/A/B/C/D ────────────────────────────────────────── */
+.game-grade {
+  display: inline-block;
+  min-width: 20px;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 800;
+  padding: 1px 5px;
+  border-radius: 3px;
+  margin-bottom: 3px;
+  letter-spacing: 1px;
+}
+.grade-S { color:#fbbf24; background:rgba(251,191,36,0.15);  border:1px solid rgba(251,191,36,0.5); text-shadow:0 0 8px rgba(251,191,36,0.6); }
+.grade-A { color:#c084fc; background:rgba(192,132,252,0.15); border:1px solid rgba(192,132,252,0.5); }
+.grade-B { color:#60a5fa; background:rgba(96,165,250,0.15);  border:1px solid rgba(96,165,250,0.5); }
+.grade-C { color:#94a3b8; background:rgba(148,163,184,0.12); border:1px solid rgba(148,163,184,0.4); }
+.grade-D { color:#f87171; background:rgba(248,113,113,0.12); border:1px solid rgba(248,113,113,0.4); }
+
 /* ── 個人近況總覽 ──────────────────────────────────────────────── */
 .overview-grid {
   display: grid;

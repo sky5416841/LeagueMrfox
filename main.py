@@ -192,7 +192,8 @@ def _aggregate_player_stats(puuid: str, count: int = 20) -> dict:
     zero = {"wins": 0, "total": 0, "winRate": 0.0,
             "avgKills": 0.0, "avgDeaths": 0.0, "avgAssists": 0.0, "kda": 0.0,
             "topChampions": [], "streakType": "", "streakCount": 0,
-            "recentGames": [], "mainPosition": "", "positionGames": 0}
+            "recentGames": [], "mainPosition": "", "positionGames": 0,
+            "killParticipation": 0.0, "damageShare": 0.0}
     if not puuid:
         return zero
 
@@ -212,6 +213,7 @@ def _aggregate_player_stats(puuid: str, count: int = 20) -> dict:
     results: list[bool] = []  # 勝負序列（最新在前），用於計算連勝/連敗
     recent_games: list[dict] = []  # 近期單場記錄（最新在前），用於趨勢小圖
     pos_stats: dict[str, int] = {}  # 位置 -> 場次
+    sum_kp = sum_dmgshare = 0.0     # 參團率/傷害佔比累加
     for g in games:
         if g.get("gameDuration", 999) < 240:
             continue
@@ -233,6 +235,18 @@ def _aggregate_player_stats(puuid: str, count: int = 20) -> dict:
             continue
         won      = bool(stats.get("win"))
         k = stats.get("kills", 0); d = stats.get("deaths", 0); a = stats.get("assists", 0)
+
+        # 傷害佔比 / 參團率（需同隊總和）
+        my_tid = pdata.get("teamId") or stats.get("teamId") or 0
+        t_k = t_dmg = 0
+        for pp in g.get("participants", []):
+            ps = pp.get("stats") or pp
+            if (pp.get("teamId") or ps.get("teamId") or 0) == my_tid:
+                t_k   += ps.get("kills", 0)
+                t_dmg += ps.get("totalDamageDealtToChampions", 0)
+        my_dmg = stats.get("totalDamageDealtToChampions", 0)
+        sum_kp       += (k + a) / t_k   if t_k   else 0
+        sum_dmgshare += my_dmg / t_dmg  if t_dmg else 0
         cnt     += 1
         wins    += 1 if won else 0
         results.append(won)
@@ -306,6 +320,8 @@ def _aggregate_player_stats(puuid: str, count: int = 20) -> dict:
             "recentGames":  recent_games[:5],
             "mainPosition": (max(pos_stats, key=pos_stats.get) if pos_stats else ""),
             "positionGames": (max(pos_stats.values()) if pos_stats else 0),
+            "killParticipation": round(sum_kp / cnt * 100, 1),
+            "damageShare":       round(sum_dmgshare / cnt * 100, 1),
         }
     return zero
 
@@ -1391,6 +1407,39 @@ def get_rank_info() -> dict | None:
         return None
 
 
+def _grade_game(game: dict, pdata: dict, stats: dict, win: bool, is_remake: bool) -> str:
+    """依該場表現給評級 S/A/B/C/D（綜合 KDA、參團率、傷害佔比）。"""
+    if is_remake:
+        return ""
+    try:
+        k = stats.get("kills", 0); d = stats.get("deaths", 0); a = stats.get("assists", 0)
+        kda = (k + a) / max(d, 1)
+        my_tid = pdata.get("teamId") or stats.get("teamId") or 0
+        t_k = t_dmg = 0
+        for pp in game.get("participants", []):
+            ps = pp.get("stats") or pp
+            if (pp.get("teamId") or ps.get("teamId") or 0) == my_tid:
+                t_k   += ps.get("kills", 0)
+                t_dmg += ps.get("totalDamageDealtToChampions", 0)
+        my_dmg = stats.get("totalDamageDealtToChampions", 0)
+        kp        = (k + a) / t_k   if t_k   else 0
+        dmg_share = my_dmg / t_dmg  if t_dmg else 0
+
+        # 綜合評分（0~100）
+        score = (min(kda, 6) / 6 * 45 +    # KDA 最高 45 分
+                 min(kp, 0.8) / 0.8 * 30 +  # 參團率 最高 30 分
+                 min(dmg_share, 0.35) / 0.35 * 25)  # 傷害佔比 最高 25 分
+        if win:
+            score += 5   # 勝利小加成
+        if   score >= 80: return "S"
+        elif score >= 65: return "A"
+        elif score >= 48: return "B"
+        elif score >= 32: return "C"
+        else:             return "D"
+    except Exception:
+        return ""
+
+
 def _parse_one_game(game: dict, source: str) -> dict | None:
     """解析單場遊戲資料，相容 LCU 格式（stats 巢狀）與 SGP 格式（stats 攤平）。
     回傳解析好的 dict，找不到玩家或失敗時回傳 None。
@@ -1467,6 +1516,7 @@ def _parse_one_game(game: dict, source: str) -> dict | None:
             "spell1Id":     p.get("spell1Id", 0),
             "spell2Id":     p.get("spell2Id", 0),
             "damage":       stats.get("totalDamageDealtToChampions", 0) or p.get("totalDamageDealtToChampions", 0),
+            "grade":        _grade_game(game, p, stats, win, is_remake),
             "gameResult":   game_result,
             "isSurrender":  is_surrender,
             "source":       source,
