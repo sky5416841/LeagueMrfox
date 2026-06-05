@@ -372,6 +372,86 @@ def _record_game_result():
         _log(f"TAGGED_RECORD_ERR >> {e}")
 
 
+@eel.expose
+def get_personal_overview(count: int = 20) -> dict:
+    """統計本人近 count 場的進階數據：參團率、傷害比、經濟比、補刀比等。"""
+    zero = {"games": 0, "wins": 0, "losses": 0, "winRate": 0.0, "kda": 0.0,
+            "avgKills": 0.0, "avgDeaths": 0.0, "avgAssists": 0.0,
+            "killParticipation": 0.0, "damageShare": 0.0,
+            "goldShare": 0.0, "csShare": 0.0}
+    if not _puuid:
+        return zero
+    try:
+        games = _fetch_player_games_sgp(_puuid, count)
+        if not games:
+            return zero
+
+        n = wins = 0
+        sumK = sumD = sumA = 0
+        sumKP = sumDmgShare = sumGoldShare = sumCsShare = 0.0
+        for g in games:
+            if g.get("gameDuration", 999) < 240:
+                continue
+            parts = g.get("participants", [])
+            idents = {i.get("participantId"): i.get("player", {}).get("puuid", "")
+                      for i in g.get("participantIdentities", [])}
+            # 找自己
+            me = None
+            for p in parts:
+                pu = p.get("puuid") or idents.get(p.get("participantId"), "")
+                if pu == _puuid:
+                    me = p; break
+            if not me:
+                continue
+            ms = me.get("stats") or me
+            my_tid = me.get("teamId") or ms.get("teamId") or 0
+
+            # 同隊統計
+            tK = tDmg = tGold = tCs = 0
+            for p in parts:
+                st = p.get("stats") or p
+                tid = p.get("teamId") or st.get("teamId") or 0
+                if tid != my_tid:
+                    continue
+                tK   += st.get("kills", 0)
+                tDmg += st.get("totalDamageDealtToChampions", 0)
+                tGold+= st.get("goldEarned", 0)
+                tCs  += st.get("totalMinionsKilled", 0) + st.get("neutralMinionsKilled", 0)
+
+            mk = ms.get("kills", 0); md = ms.get("deaths", 0); ma = ms.get("assists", 0)
+            myDmg = ms.get("totalDamageDealtToChampions", 0)
+            myGold= ms.get("goldEarned", 0)
+            myCs  = ms.get("totalMinionsKilled", 0) + ms.get("neutralMinionsKilled", 0)
+
+            n += 1
+            wins += 1 if ms.get("win") else 0
+            sumK += mk; sumD += md; sumA += ma
+            sumKP        += (mk + ma) / tK   if tK   else 0
+            sumDmgShare  += myDmg / tDmg      if tDmg else 0
+            sumGoldShare += myGold / tGold    if tGold else 0
+            sumCsShare   += myCs / tCs        if tCs  else 0
+
+        if n == 0:
+            return zero
+        return {
+            "games":   n,
+            "wins":    wins,
+            "losses":  n - wins,
+            "winRate": round(wins / n * 100, 1),
+            "kda":     round((sumK + sumA) / max(sumD, 1), 2),
+            "avgKills":   round(sumK / n, 1),
+            "avgDeaths":  round(sumD / n, 1),
+            "avgAssists": round(sumA / n, 1),
+            "killParticipation": round(sumKP / n * 100, 1),
+            "damageShare":       round(sumDmgShare / n * 100, 1),
+            "goldShare":         round(sumGoldShare / n * 100, 1),
+            "csShare":           round(sumCsShare / n * 100, 1),
+        }
+    except Exception as e:
+        _log(f"OVERVIEW_ERR >> {e}")
+        return zero
+
+
 _TIER_ZH = {
     "IRON": "黑鐵", "BRONZE": "青銅", "SILVER": "白銀",
     "GOLD": "黃金", "PLATINUM": "白金", "EMERALD": "翡翠",

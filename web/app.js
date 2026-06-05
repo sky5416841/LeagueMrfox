@@ -754,11 +754,46 @@ function _renderRank(type, rank) {
 }
 
 // ── 作戰紀錄載入 ────────────────────────────────────────────────────────
+// ── 個人近況總覽 ───────────────────────────────────────────────────────
+async function loadOverview() {
+  const body = document.getElementById('overview-body');
+  const rangeEl = document.getElementById('overview-range');
+  if (!body) return;
+  try {
+    const o = await eel.get_personal_overview(20)();
+    if (!o || o.games === 0) {
+      body.innerHTML = '<div class="overview-empty">暫無資料</div>';
+      if (rangeEl) rangeEl.textContent = '';
+      return;
+    }
+    if (rangeEl) rangeEl.textContent = `近 ${o.games} 場`;
+    const wrColor = o.winRate >= 55 ? '#4ade80' : o.winRate >= 48 ? '#a3e635' : '#fb923c';
+    const cell = (label, val, color) =>
+      `<div class="overview-cell">
+         <div class="overview-val" style="${color ? `color:${color}` : ''}">${val}</div>
+         <div class="overview-label">${label}</div>
+       </div>`;
+    body.innerHTML =
+      cell('勝率', `${o.winRate}%`, wrColor) +
+      cell('戰績', `${o.wins}W ${o.losses}L`) +
+      cell('平均 KDA', o.kda, o.kda >= 3 ? '#4ade80' : '') +
+      cell('K/D/A', `${o.avgKills}/${o.avgDeaths}/${o.avgAssists}`) +
+      cell('參團率', `${o.killParticipation}%`) +
+      cell('傷害比', `${o.damageShare}%`) +
+      cell('經濟比', `${o.goldShare}%`) +
+      cell('補刀比', `${o.csShare}%`);
+  } catch (e) {
+    body.innerHTML = '<div class="overview-empty">載入失敗</div>';
+  }
+}
+
 async function loadMatchHistory() {
   const list = document.getElementById('match-list');
 
   const startIndex  = (currentPage - 1) * itemsPerPage;
   const targetCount = itemsPerPage;
+
+  if (currentPage === 1) loadOverview();   // 第一頁時刷新總覽
 
   list.innerHTML =
     `<div class="py-6 text-center text-[10px] text-slate-700 tracking-widest">` +

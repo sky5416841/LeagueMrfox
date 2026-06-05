@@ -9,7 +9,7 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=25">
+  <link rel="stylesheet" href="style.css?v=26">
 </head>
 <body class="bg-[#020617] h-screen overflow-hidden select-none flex flex-col">
 
@@ -173,6 +173,16 @@
             </div>
           </div>
 
+        </div>
+      </div>
+
+      <!-- 中段：個人近況總覽 -->
+      <div class="panel shrink-0">
+        <div class="panel-header flex items-center justify-between">
+          <span>// 近況總覽 <span id="overview-range" class="text-slate-700 text-[9px]"></span></span>
+        </div>
+        <div id="overview-body" class="overview-grid">
+          <div class="overview-empty">載入中...</div>
         </div>
       </div>
 
@@ -454,6 +464,6 @@
   </div>
 </div>
 
-<script src="app.js?v=25"></script>
+<script src="app.js?v=26"></script>
 </body>
 </html>
