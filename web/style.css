@@ -1060,6 +1060,18 @@ body, input, button, textarea {
   letter-spacing: 1px;
   white-space: nowrap;
 }
+/* ── 主玩位置 ──────────────────────────────────────────────────── */
+.pos-badge {
+  font-size: 9px;
+  color: #94a3b8;
+  background: rgba(148,163,184,0.1);
+  border: 1px solid rgba(148,163,184,0.3);
+  padding: 1px 6px;
+  border-radius: 3px;
+  letter-spacing: 1px;
+  white-space: nowrap;
+}
+
 /* ── 玩家標記 ──────────────────────────────────────────────────── */
 .player-tag {
   font-size: 9px;

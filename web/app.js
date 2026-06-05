@@ -243,6 +243,13 @@ function _renderLiveCard(p) {
         : `<span class="streak-badge streak-lose">❄️ ${p.streakCount}連敗</span>`)
     : '';
 
+  // 主玩位置（≥3 場才顯示，才有參考價值）
+  const POS_MAP = { TOP:'上路', JUNGLE:'打野', MIDDLE:'中路', BOTTOM:'下路', UTILITY:'輔助' };
+  const posName = POS_MAP[p.mainPosition] || '';
+  const posHtml = (posName && (p.positionGames || 0) >= 3)
+    ? `<span class="pos-badge" title="主玩位置（近期 ${p.positionGames} 場）">${posName}</span>`
+    : '';
+
   // 開黑組標記（同組同色，最多 5 組循環配色）
   const grp = p.premadeGroup || 0;
   const premadeHtml = grp > 0
@@ -327,7 +334,7 @@ function _renderLiveCard(p) {
       <div class="flex items-center gap-3">
         ${iconHtml}
         <div class="flex-1 min-w-0">
-          <div class="flex items-center gap-2 flex-wrap">${nameHtml}${champTag}${premadeHtml}${streakHtml}${tagHtml}${badge}${tagBtn}</div>
+          <div class="flex items-center gap-2 flex-wrap">${nameHtml}${champTag}${posHtml}${premadeHtml}${streakHtml}${tagHtml}${badge}${tagBtn}</div>
           ${rankHtml}
           ${statsHtml}
           ${(topChampsHtml || trendHtml) ? `<div class="card-extra-row">${topChampsHtml}${trendHtml}</div>` : ''}

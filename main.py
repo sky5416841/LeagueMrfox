@@ -192,7 +192,7 @@ def _aggregate_player_stats(puuid: str, count: int = 20) -> dict:
     zero = {"wins": 0, "total": 0, "winRate": 0.0,
             "avgKills": 0.0, "avgDeaths": 0.0, "avgAssists": 0.0, "kda": 0.0,
             "topChampions": [], "streakType": "", "streakCount": 0,
-            "recentGames": []}
+            "recentGames": [], "mainPosition": "", "positionGames": 0}
     if not puuid:
         return zero
 
@@ -211,6 +211,7 @@ def _aggregate_player_stats(puuid: str, count: int = 20) -> dict:
     champ_stats: dict[int, dict] = {}  # championId -> {games, wins}
     results: list[bool] = []  # 勝負序列（最新在前），用於計算連勝/連敗
     recent_games: list[dict] = []  # 近期單場記錄（最新在前），用於趨勢小圖
+    pos_stats: dict[str, int] = {}  # 位置 -> 場次
     for g in games:
         if g.get("gameDuration", 999) < 240:
             continue
@@ -245,6 +246,12 @@ def _aggregate_player_stats(puuid: str, count: int = 20) -> dict:
             "kda": round((k + a) / max(d, 1), 2),
             "k": k, "d": d, "a": a,
         })
+
+        # 統計位置（teamPosition：TOP/JUNGLE/MIDDLE/BOTTOM/UTILITY；ARAM 為空）
+        pos = (pdata.get("teamPosition") or stats.get("teamPosition") or
+               pdata.get("individualPosition") or "").upper()
+        if pos and pos != "NONE":
+            pos_stats[pos] = pos_stats.get(pos, 0) + 1
 
         # 統計每個英雄的場次與勝場（championId 在 pdata 頂層）
         ch_id = pdata.get("championId") or stats.get("championId") or 0
@@ -297,6 +304,8 @@ def _aggregate_player_stats(puuid: str, count: int = 20) -> dict:
             "streakType":   streak_type,
             "streakCount":  streak_count,
             "recentGames":  recent_games[:5],
+            "mainPosition": (max(pos_stats, key=pos_stats.get) if pos_stats else ""),
+            "positionGames": (max(pos_stats.values()) if pos_stats else 0),
         }
     return zero
 
