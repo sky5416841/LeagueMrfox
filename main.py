@@ -1543,6 +1543,26 @@ def window_minimize():
         _webview_window.minimize()
 
 
+_window_maximized = False
+
+
+@eel.expose
+def window_toggle_maximize():
+    """切換最大化／還原。"""
+    global _window_maximized
+    if not _webview_window:
+        return
+    try:
+        if _window_maximized:
+            _webview_window.restore()
+            _window_maximized = False
+        else:
+            _webview_window.maximize()
+            _window_maximized = True
+    except Exception as e:
+        _log(f"WINDOW_MAX_ERR >> {e}")
+
+
 @eel.expose
 def window_close():
     """關閉原生視窗。"""
@@ -2165,11 +2185,12 @@ if __name__ == "__main__":
     _webview_window = webview.create_window(
         "LeagueMrfox",
         f"http://localhost:8000/index.html?v={_cache_bust}",
-        width=1280,
-        height=800,
-        min_size=(800, 600),
+        width=1440,
+        height=860,
+        min_size=(900, 600),
         frameless=True,
         easy_drag=False,
+        resizable=True,
     )
     webview.start()
     sys.exit(0)

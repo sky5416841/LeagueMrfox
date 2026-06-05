@@ -1264,9 +1264,16 @@ window.addEventListener('load', async () => {
 
   // 自訂標題列按鈕
   const tbMin = document.getElementById('tb-min');
+  const tbMax = document.getElementById('tb-max');
   const tbClose = document.getElementById('tb-close');
   if (tbMin)   tbMin.addEventListener('click',   () => eel.window_minimize()());
+  if (tbMax)   tbMax.addEventListener('click',   () => eel.window_toggle_maximize()());
   if (tbClose) tbClose.addEventListener('click', () => eel.window_close()());
+  // 雙擊標題列空白處也能最大化／還原
+  const tbBar = document.getElementById('titlebar');
+  if (tbBar) tbBar.addEventListener('dblclick', (e) => {
+    if (!e.target.closest('.titlebar-controls')) eel.window_toggle_maximize()();
+  });
 
   document.getElementById('items-per-page').addEventListener('change', function () {
     itemsPerPage = parseInt(this.value, 10);
