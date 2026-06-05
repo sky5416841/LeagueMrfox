@@ -57,6 +57,9 @@ _EMPTY_PUUID = '00000000-0000-0000-0000-000000000000'  # 空位/匿名槽特徵 
 
 # 本地戰績快取路徑（data/ 已在 .gitignore，個人數據不上傳）
 _MATCH_CACHE_FILE = os.path.join(os.path.dirname(__file__), "data", "match_history_cache.json")
+# 玩家標記資料：puuid -> {tag, color, withWins, withLosses, vsWins, vsLosses, lastName}
+_TAGGED_PLAYERS_FILE = os.path.join(os.path.dirname(__file__), "data", "tagged_players.json")
+_tagged_players: dict = {}   # 啟動時載入，記憶體快取
 
 # SGP 各區域 URL（來源：LeagueAkari/resources/builtin-config/sgp/league-servers.json）
 _SGP_MATCH_HISTORY_URLS: dict[str, str] = {
@@ -298,6 +301,68 @@ def _aggregate_player_stats(puuid: str, count: int = 20) -> dict:
     return zero
 
 
+_last_recorded_game_id = None  # 防止同一場重複計入勝負記錄
+
+
+def _record_game_result():
+    """遊戲結束時呼叫：抓自己最新一場戰績，更新與已標記玩家的同隊/對敵勝負。"""
+    global _last_recorded_game_id
+    if not _tagged_players:
+        return   # 沒有任何標記玩家，省略
+    try:
+        games = _fetch_player_games_sgp(_puuid, 1)
+        if not games:
+            raw = _client.get(
+                f"/lol-match-history/v1/products/lol/{_puuid}/matches?begIndex=0&endIndex=0")
+            games = raw.get("games", {}).get("games", [])
+        if not games:
+            _log("TAGGED >> 取不到最新對局，略過勝負記錄")
+            return
+        g = games[0]
+        gid = g.get("gameId")
+        if gid and gid == _last_recorded_game_id:
+            return   # 已記錄過
+
+        # 建立 puuid -> (teamId, win) 對照
+        roster = []
+        parts = g.get("participants", [])
+        idents = {i.get("participantId"): i.get("player", {}).get("puuid", "")
+                  for i in g.get("participantIdentities", [])}
+        for p in parts:
+            pu = p.get("puuid") or idents.get(p.get("participantId"), "")
+            st = p.get("stats") or p
+            tid = p.get("teamId") or st.get("teamId") or 0
+            won = bool(st.get("win"))
+            if pu:
+                roster.append((pu, tid, won))
+
+        me = next((r for r in roster if r[0] == _puuid), None)
+        if not me:
+            _log("TAGGED >> 最新對局找不到自己，略過")
+            return
+        my_tid, my_win = me[1], me[2]
+
+        updated = 0
+        for pu, tid, _ in roster:
+            if pu == _puuid or pu not in _tagged_players:
+                continue
+            rec = _tagged_players[pu]
+            same_team = (tid == my_tid)
+            if same_team:
+                key = "withWins" if my_win else "withLosses"
+            else:
+                key = "vsWins" if my_win else "vsLosses"
+            rec[key] = rec.get(key, 0) + 1
+            updated += 1
+
+        if updated:
+            _last_recorded_game_id = gid
+            _save_tagged_players()
+            _log(f"TAGGED >> 已更新 {updated} 位標記玩家的勝負記錄（本場{'勝' if my_win else '敗'}）")
+    except Exception as e:
+        _log(f"TAGGED_RECORD_ERR >> {e}")
+
+
 _TIER_ZH = {
     "IRON": "黑鐵", "BRONZE": "青銅", "SILVER": "白銀",
     "GOLD": "黃金", "PLATINUM": "白金", "EMERALD": "翡翠",
@@ -453,6 +518,8 @@ def _scan_lobby_sync(my_team: list):
                 except Exception as e:
                     _log(f"LOBBY_SCAN >> 段位失敗 puuid={puuid[:8] if puuid else '?'}: {e}")
 
+            entry["puuid"] = puuid
+            entry["tagInfo"] = _get_tag(puuid)
             return entry
 
         _t0 = time.time()
@@ -715,6 +782,7 @@ def _scan_ingame_sync():
                 except Exception as e:
                     _log(f"INGAME_SCAN >> 段位失敗 {puuid[:8]}: {e}")
 
+            entry["tagInfo"] = _get_tag(puuid)
             return entry
 
         # 並行查詢全場 10 人（每人查戰績+段位，序列太慢）
@@ -758,6 +826,61 @@ def _save_match_cache(games_dict: dict):
             json.dump({"puuid": _puuid, "games": games_dict}, f, ensure_ascii=False)
     except Exception as e:
         _log(f"CACHE_WRITE_ERR >> {e}")
+
+
+# ── 玩家標記儲存層 ─────────────────────────────────────────────────────
+def _load_tagged_players():
+    """啟動時從磁碟載入玩家標記到記憶體。"""
+    global _tagged_players
+    try:
+        if os.path.exists(_TAGGED_PLAYERS_FILE):
+            with open(_TAGGED_PLAYERS_FILE, "r", encoding="utf-8") as f:
+                _tagged_players = json.load(f)
+            _log(f"TAGGED >> 載入 {len(_tagged_players)} 筆玩家標記")
+    except Exception as e:
+        _log(f"TAGGED_LOAD_ERR >> {e}")
+        _tagged_players = {}
+
+
+def _save_tagged_players():
+    """將標記寫回磁碟。"""
+    try:
+        os.makedirs(os.path.dirname(_TAGGED_PLAYERS_FILE), exist_ok=True)
+        with open(_TAGGED_PLAYERS_FILE, "w", encoding="utf-8") as f:
+            json.dump(_tagged_players, f, ensure_ascii=False)
+    except Exception as e:
+        _log(f"TAGGED_SAVE_ERR >> {e}")
+
+
+def _get_tag(puuid: str) -> dict:
+    """取得某玩家的標記資料，無則回傳空 dict。"""
+    if not puuid:
+        return {}
+    return _tagged_players.get(puuid, {})
+
+
+@eel.expose
+def set_player_tag(puuid: str, tag: str, color: str = "yellow"):
+    """設定/更新玩家標記文字與顏色（空字串=移除標記）。"""
+    if not puuid:
+        return False
+    tag = (tag or "").strip()
+    if not tag:
+        _tagged_players.pop(puuid, None)
+        _log(f"TAGGED >> 移除標記 ...{puuid[-6:]}")
+    else:
+        rec = _tagged_players.setdefault(puuid, {})
+        rec["tag"] = tag
+        rec["color"] = color or "yellow"
+        _log(f"TAGGED >> 設定標記 ...{puuid[-6:]} = {tag}")
+    _save_tagged_players()
+    return True
+
+
+@eel.expose
+def get_player_tag(puuid: str):
+    """前端查詢單一玩家標記。"""
+    return _get_tag(puuid)
 
 
 def _load_champ_summary():
@@ -1005,6 +1128,7 @@ def initialize():
 
         _log(f"OPERATOR_PROFILE >> loaded: {full} // LVL {lvl} // ICON {icon_id}")
         _load_champ_summary()
+        _load_tagged_players()
         _start_ws()
 
         # ── 架構探勘報告（LeagueAkari 技術轉移藍圖）──────────────────────
@@ -1907,6 +2031,12 @@ def _handle_gameflow_phase(phase):
             eel.on_champ_select_ended(phase)()
         except Exception:
             pass
+        # 結算時更新與標記玩家的勝負記錄（延遲幾秒等戰績寫入）
+        if phase == "EndOfGame":
+            def _delayed_record():
+                time.sleep(5)
+                _record_game_result()
+            threading.Thread(target=_delayed_record, daemon=True).start()
     # Lobby / Matchmaking / ReadyCheck / ChampSelect 等其他狀態
     # 不主動觸發任何掃描（大廳掃描由 WS champ-select session 事件驅動）
 

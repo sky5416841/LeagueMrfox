@@ -2,7 +2,7 @@
 
 // Tailwind CDN 會在 body 注入浮水印徽章，偵測並移除非己方元素
 (function removeCdnBadge() {
-  const ours = new Set(['accept-flash', 'game-modal', 'titlebar']);
+  const ours = new Set(['accept-flash', 'game-modal', 'titlebar', 'tag-modal']);
   function sweep() {
     document.querySelectorAll('body > div').forEach(el => {
       if (ours.has(el.id) || el.classList.contains('scanlines')) return;
@@ -105,6 +105,36 @@ function on_auto_ban_done(champId) {
 }
 
 // ── 大廳 X 光機回調 ────────────────────────────────────────────────────
+// 保存當前 Live 畫面資料，供標記後就地重繪
+let _liveState = null;
+
+function _renderLiveInto() {
+  const playersEl = document.getElementById('live-players');
+  if (!playersEl || !_liveState) return;
+  const s = _liveState;
+  if (s.kind === 'ingame' || s.kind === 'aram') {
+    const leftHdr  = s.kind === 'aram' ? '// 我方' : '// 友方';
+    const rightHdr = s.kind === 'aram' ? '// 敵方 [ARAM]' : '// 敵方';
+    playersEl.innerHTML = `
+      <div class="ingame-panel">
+        <div class="ingame-team-col">
+          <div class="ingame-team-hdr ingame-team-hdr-blue">${leftHdr}</div>
+          ${s.allies.map(p => _renderLiveCard(p)).join('')}
+        </div>
+        <div class="ingame-divider"></div>
+        <div class="ingame-team-col">
+          <div class="ingame-team-hdr ingame-team-hdr-red">${rightHdr}</div>
+          ${s.enemies.map(p => _renderLiveCard(p)).join('')}
+        </div>
+      </div>`;
+  } else {
+    playersEl.innerHTML = s.allies.map(p => _renderLiveCard(p)).join('');
+  }
+  playersEl.querySelectorAll('[data-champid]').forEach(img => {
+    _loadChampIcon(parseInt(img.dataset.champid), img);
+  });
+}
+
 eel.expose(on_lobby_scan_ready);
 function on_lobby_scan_ready(players) {
   append_log(`LOBBY_SCAN ▶▶ 情報就緒 (${players.length} 位)`, true);
@@ -112,31 +142,14 @@ function on_lobby_scan_ready(players) {
   const statusEl  = document.getElementById('live-status');
   const playersEl = document.getElementById('live-players');
   if (statusEl) statusEl.textContent = `掃描完成 · ${players.length} 位成員`;
-
   if (!playersEl) return;
 
   const allies  = players.filter(p => !p.isEnemy);
   const enemies = players.filter(p =>  p.isEnemy);
-
-  if (enemies.length > 0) {
-    // ARAM 模式：雙方選角均可見，用雙欄呈現完整情報
-    playersEl.innerHTML = `
-      <div class="ingame-panel">
-        <div class="ingame-team-col">
-          <div class="ingame-team-hdr ingame-team-hdr-blue">// 我方</div>
-          ${allies.map(p => _renderLiveCard(p)).join('')}
-        </div>
-        <div class="ingame-divider"></div>
-        <div class="ingame-team-col">
-          <div class="ingame-team-hdr ingame-team-hdr-red">// 敵方 [ARAM]</div>
-          ${enemies.map(p => _renderLiveCard(p)).join('')}
-        </div>
-      </div>`;
-  } else {
-    // 一般模式：單欄顯示隊友
-    playersEl.innerHTML = players.map(p => _renderLiveCard(p)).join('');
-  }
-
+  _liveState = (enemies.length > 0)
+    ? { kind: 'aram',   allies, enemies }
+    : { kind: 'lobby',  allies: players, enemies: [] };
+  _renderLiveInto();
   switchTab('live');
 }
 
@@ -174,27 +187,10 @@ function on_ingame_scan_ready(data) {
 
   if (statusEl) statusEl.textContent = `遊戲進行中 · 友方 ${data.myTeam.length} 人 vs 敵方 ${data.enemyTeam.length} 人`;
   if (badge)    badge.textContent    = '[ 遊戲進行中 ]';
-
   if (!playersEl) return;
 
-  playersEl.innerHTML = `
-    <div class="ingame-panel">
-      <div class="ingame-team-col">
-        <div class="ingame-team-hdr ingame-team-hdr-blue">// 友方</div>
-        ${data.myTeam.map(p => _renderLiveCard(p)).join('')}
-      </div>
-      <div class="ingame-divider"></div>
-      <div class="ingame-team-col">
-        <div class="ingame-team-hdr ingame-team-hdr-red">// 敵方</div>
-        ${data.enemyTeam.map(p => _renderLiveCard(p)).join('')}
-      </div>
-    </div>`;
-
-  // 非同步載入英雄頭像
-  playersEl.querySelectorAll('[data-champid]').forEach(img => {
-    _loadChampIcon(parseInt(img.dataset.champid), img);
-  });
-
+  _liveState = { kind: 'ingame', allies: data.myTeam, enemies: data.enemyTeam };
+  _renderLiveInto();
   switchTab('live');
 }
 
@@ -251,6 +247,23 @@ function _renderLiveCard(p) {
   const grp = p.premadeGroup || 0;
   const premadeHtml = grp > 0
     ? `<span class="premade-badge premade-${grp}" title="開黑組 ${grp}">👥${grp}</span>`
+    : '';
+
+  // 玩家標記徽章 + 同隊/對敵勝負記錄
+  const ti = p.tagInfo || {};
+  let tagHtml = '';
+  if (ti.tag) {
+    tagHtml = `<span class="player-tag tag-${ti.color || 'yellow'}">🏷️ ${ti.tag}</span>`;
+    const ww = ti.withWins || 0, wl = ti.withLosses || 0;
+    const vw = ti.vsWins || 0,  vl = ti.vsLosses || 0;
+    const recs = [];
+    if (ww + wl > 0) recs.push(`<span class="tag-rec tag-rec-with" title="與此人同隊">同隊 ${ww}-${wl}</span>`);
+    if (vw + vl > 0) recs.push(`<span class="tag-rec tag-rec-vs" title="與此人對敵">對敵 ${vw}-${vl}</span>`);
+    tagHtml += recs.join('');
+  }
+  // 標記按鈕（有 puuid 才能標記）
+  const tagBtn = p.puuid
+    ? `<button class="tag-btn" onclick="openTagModal('${p.puuid}', ${JSON.stringify((p.name||'').replace(/'/g,'')).replace(/"/g,'&quot;')})" title="標記此玩家">✎</button>`
     : '';
 
   // 戰績區（匿名玩家只要有 PUUID 資料就照樣顯示，不隱藏）
@@ -314,13 +327,53 @@ function _renderLiveCard(p) {
       <div class="flex items-center gap-3">
         ${iconHtml}
         <div class="flex-1 min-w-0">
-          <div class="flex items-center gap-2 flex-wrap">${nameHtml}${champTag}${premadeHtml}${streakHtml}${badge}</div>
+          <div class="flex items-center gap-2 flex-wrap">${nameHtml}${champTag}${premadeHtml}${streakHtml}${tagHtml}${badge}${tagBtn}</div>
           ${rankHtml}
           ${statsHtml}
           ${(topChampsHtml || trendHtml) ? `<div class="card-extra-row">${topChampsHtml}${trendHtml}</div>` : ''}
         </div>
       </div>
     </div>`;
+}
+
+// ── 玩家標記 Modal ─────────────────────────────────────────────────────
+let _tagModalPuuid = '';
+async function openTagModal(puuid, playerName) {
+  _tagModalPuuid = puuid;
+  const existing = await eel.get_player_tag(puuid)();
+  document.getElementById('tag-modal-name').textContent = playerName || '玩家';
+  document.getElementById('tag-modal-input').value = (existing && existing.tag) || '';
+  _tagSelectedColor = (existing && existing.color) || 'yellow';
+  _refreshTagColorButtons();
+  document.getElementById('tag-modal').style.display = 'flex';
+  setTimeout(() => document.getElementById('tag-modal-input').focus(), 50);
+}
+function closeTagModal() {
+  document.getElementById('tag-modal').style.display = 'none';
+  _tagModalPuuid = '';
+}
+let _tagSelectedColor = 'yellow';
+function _refreshTagColorButtons() {
+  document.querySelectorAll('.tag-color-opt').forEach(b => {
+    b.classList.toggle('selected', b.dataset.color === _tagSelectedColor);
+  });
+}
+function selectTagColor(c) { _tagSelectedColor = c; _refreshTagColorButtons(); }
+async function saveTag() {
+  const tag = document.getElementById('tag-modal-input').value.trim();
+  const puuid = _tagModalPuuid;
+  await eel.set_player_tag(puuid, tag, _tagSelectedColor)();
+  // 就地更新當前畫面該玩家的標記並重繪
+  if (_liveState) {
+    [...(_liveState.allies || []), ...(_liveState.enemies || [])].forEach(p => {
+      if (p.puuid === puuid) {
+        p.tagInfo = tag ? { tag, color: _tagSelectedColor } : {};
+      }
+    });
+    _renderLiveInto();
+  }
+  closeTagModal();
+  append_log(tag ? `TAGGED ▶▶ 已標記：${tag}` : 'TAGGED ▶▶ 已移除標記', true);
 }
 
 // ── 英雄選擇器 ─────────────────────────────────────────────────────────

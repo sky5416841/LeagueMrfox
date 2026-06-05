@@ -9,7 +9,7 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=20">
+  <link rel="stylesheet" href="style.css?v=23">
 </head>
 <body class="bg-[#020617] h-screen overflow-hidden select-none flex flex-col">
 
@@ -423,6 +423,36 @@
   </div>
 </div>
 
-<script src="app.js?v=20"></script>
+<!-- ── 玩家標記 Modal ── -->
+<div id="tag-modal" style="display:none"
+     class="fixed inset-0 z-[10001] items-center justify-center">
+  <div class="game-modal-backdrop" onclick="closeTagModal()"></div>
+  <div class="tag-modal-panel">
+    <div class="game-modal-hdr">
+      <span class="text-cyan-600 tracking-widest">// 標記玩家</span>
+      <span id="tag-modal-name" class="text-[11px] text-cyan-300 ml-3"></span>
+      <button onclick="closeTagModal()" class="game-modal-close">[ X ]</button>
+    </div>
+    <div class="tag-modal-body">
+      <label class="tag-modal-label">標記文字（清空可移除）</label>
+      <input id="tag-modal-input" class="tag-modal-input" maxlength="20"
+             placeholder="例如：水裝J、強隊友、避雷"
+             onkeydown="if(event.key==='Enter')saveTag();if(event.key==='Escape')closeTagModal();">
+      <label class="tag-modal-label">顏色</label>
+      <div class="tag-color-row">
+        <button class="tag-color-opt tag-red"    data-color="red"    onclick="selectTagColor('red')"    title="避雷"></button>
+        <button class="tag-color-opt tag-yellow" data-color="yellow" onclick="selectTagColor('yellow')" title="注意"></button>
+        <button class="tag-color-opt tag-green"  data-color="green"  onclick="selectTagColor('green')"  title="好友"></button>
+        <button class="tag-color-opt tag-blue"   data-color="blue"   onclick="selectTagColor('blue')"   title="一般"></button>
+      </div>
+      <div class="tag-modal-actions">
+        <button onclick="closeTagModal()" class="tag-btn-cancel">取消</button>
+        <button onclick="saveTag()" class="tag-btn-save">儲存</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="app.js?v=23"></script>
 </body>
 </html>
