@@ -90,10 +90,10 @@ build.bat
 ## 7. 程式展示
 
 <p align="center">
-  <img src="scshot/截圖一.png" width="800" alt="截圖一">
+  <img src="https://github.com/sky5416841/LeagueMrfox/releases/download/v1.2/screenshot1.png" width="800" alt="截圖一">
 </p>
 <p align="center">
-  <img src="scshot/截圖二.png" width="800" alt="截圖二">
+  <img src="https://github.com/sky5416841/LeagueMrfox/releases/download/v1.2/screenshot2.png" width="800" alt="截圖二">
 </p>
 
 ---
