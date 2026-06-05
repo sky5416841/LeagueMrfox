@@ -7,6 +7,7 @@ import ssl
 import base64
 import asyncio
 import threading
+from concurrent.futures import ThreadPoolExecutor
 
 import eel
 import urllib3
@@ -383,9 +384,8 @@ def _scan_lobby_sync(my_team: list):
     global _lobby_scan_in_progress
     try:
         _log(f"LOBBY_SCAN >> 開始掃描 {len(my_team)} 位成員...")
-        results = []
 
-        for player in my_team:
+        def _scan_lobby_one(player: dict) -> dict:
             sid        = player.get("summonerId", 0)
             puuid      = player.get("puuid", "") or ""
             # 過濾空位 PUUID（Riot 以全零 UUID 代表未填入的槽位）
@@ -418,8 +418,7 @@ def _scan_lobby_sync(my_team: list):
             }
 
             if is_anon:
-                results.append(entry)
-                continue
+                return entry
 
             # ── 取召喚師名稱（v2 API）────────────────────────────────
             try:
@@ -442,8 +441,7 @@ def _scan_lobby_sync(my_team: list):
             # ── 取近 20 場戰績（SGP 優先，LCU 備援）────────────────────
             if puuid:
                 try:
-                    player_stats = _aggregate_player_stats(puuid)
-                    entry.update(player_stats)
+                    entry.update(_aggregate_player_stats(puuid))
                 except Exception as e:
                     _log(f"LOBBY_SCAN >> 戰績失敗 puuid={puuid[:8] if puuid else '?'}: {e}")
                     entry["error"] = True
@@ -451,14 +449,17 @@ def _scan_lobby_sync(my_team: list):
             # ── 取積分段位 ────────────────────────────────────────────
             if puuid:
                 try:
-                    ranked = _fetch_ranked_stats(puuid)
-                    entry.update(ranked)
+                    entry.update(_fetch_ranked_stats(puuid))
                 except Exception as e:
                     _log(f"LOBBY_SCAN >> 段位失敗 puuid={puuid[:8] if puuid else '?'}: {e}")
 
-            results.append(entry)
+            return entry
 
-        _log(f"LOBBY_SCAN >> 完成！{len(results)} 位玩家情報就緒")
+        _t0 = time.time()
+        with ThreadPoolExecutor(max_workers=10) as _pool:
+            results = list(_pool.map(_scan_lobby_one, my_team))
+
+        _log(f"LOBBY_SCAN >> 完成！{len(results)} 位玩家情報就緒（耗時 {time.time()-_t0:.1f}s）")
         try:
             eel.on_lobby_scan_ready(results)()
         except Exception as e:
@@ -716,11 +717,15 @@ def _scan_ingame_sync():
 
             return entry
 
-        my_team    = [_scan_one(p) for p in my_raw]
-        enemy_team = [_scan_one(p) for p in enemy_raw]
+        # 並行查詢全場 10 人（每人查戰績+段位，序列太慢）
+        _t0 = time.time()
+        with ThreadPoolExecutor(max_workers=10) as _pool:
+            _all = list(_pool.map(_scan_one, my_raw + enemy_raw))
+        my_team    = _all[:len(my_raw)]
+        enemy_team = _all[len(my_raw):]
         _mark_premade_groups(my_team)
         _mark_premade_groups(enemy_team)
-        _log(f"INGAME_SCAN >> 完成！{len(my_team)}+{len(enemy_team)} 人雷達就緒")
+        _log(f"INGAME_SCAN >> 完成！{len(my_team)}+{len(enemy_team)} 人雷達就緒（耗時 {time.time()-_t0:.1f}s）")
         try:
             eel.on_ingame_scan_ready({"myTeam": my_team, "enemyTeam": enemy_team})()
         except Exception as e:
