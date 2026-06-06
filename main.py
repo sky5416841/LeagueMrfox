@@ -53,12 +53,15 @@ _last_scanned_team_key  = ''   # 防止對同一場大廳重複掃描
 _lobby_scan_in_progress = False
 _ingame_scan_in_progress = False  # 遊戲中 10 人雷達
 _webview_window = None             # pywebview 原生視窗參考（自訂標題列控制用）
+_last_hovered_champ = 0             # 選角階段上次偵測到自己選的英雄（避免重複推播）
 _EMPTY_PUUID = '00000000-0000-0000-0000-000000000000'  # 空位/匿名槽特徵 PUUID（LeagueAkari 過濾標準）
 
 # 本地戰績快取路徑（data/ 已在 .gitignore，個人數據不上傳）
 _MATCH_CACHE_FILE = os.path.join(os.path.dirname(__file__), "data", "match_history_cache.json")
 # 玩家標記資料：puuid -> {tag, color, withWins, withLosses, vsWins, vsLosses, lastName}
 _TAGGED_PLAYERS_FILE = os.path.join(os.path.dirname(__file__), "data", "tagged_players.json")
+# 自動化偏好設定（自動接受/選角/禁角的開關與英雄）
+_PREFS_FILE = os.path.join(os.path.dirname(__file__), "data", "prefs.json")
 _tagged_players: dict = {}   # 啟動時載入，記憶體快取
 
 # SGP 各區域 URL（來源：LeagueAkari/resources/builtin-config/sgp/league-servers.json）
@@ -158,6 +161,69 @@ def _sgp_get_summoner_names(puuids: list[str]) -> dict[str, str]:
     except Exception as e:
         _log(f"SGP_SUMMONER >> 失敗: {e}")
         return {}
+
+
+# ── OP.GG 英雄攻略 API ─────────────────────────────────────────────────
+_OPGG_BASE = "https://lol-api-champion.op.gg"
+_OPGG_UA   = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+              "(KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36")
+_opgg_cache: dict = {}   # key: f"{mode}/{champ_id}/{position}" -> data
+
+
+def _opgg_get(path: str, params: dict = None) -> dict:
+    """呼叫 OP.GG API，回傳 data 欄位；失敗回傳空 dict。"""
+    try:
+        resp = requests.get(f"{_OPGG_BASE}{path}", params=params or {},
+                            headers={"User-Agent": _OPGG_UA}, timeout=12)
+        resp.raise_for_status()
+        return resp.json().get("data", {})
+    except Exception as e:
+        _log(f"OPGG_ERR >> {path}: {e}")
+        return {}
+
+
+@eel.expose
+def opgg_get_champion(champ_id: int, mode: str = "ranked", position: str = "", tier: str = "all") -> dict:
+    """取得單英雄 OP.GG 攻略（符文/出裝/召喚師技能/技能加點）。
+    mode: ranked / aram / arena；position: top/jungle/mid/adc/support（aram 自動 none）。
+    """
+    if not champ_id:
+        return {}
+    if mode == "aram":
+        position = "none"
+    elif mode == "arena":
+        position = ""
+    pos = position or "none"
+    cache_key = f"{mode}/{champ_id}/{pos}/{tier}"
+    if cache_key in _opgg_cache:
+        return _opgg_cache[cache_key]
+
+    region = "kr"   # OP.GG 以 kr 樣本最大，作為全球參考
+    if mode == "arena":
+        data = _opgg_get(f"/api/{region}/champions/{mode}/{champ_id}", {"tier": tier})
+    elif mode == "aram":
+        data = _opgg_get(f"/api/{region}/champions/{mode}/{champ_id}/none", {"tier": tier})
+    else:
+        # ranked：位置不可為 none，未指定時依序嘗試常見位置
+        positions = [position] if (position and position != "none") else ["mid", "top", "adc", "support", "jungle"]
+        data = {}
+        for pp in positions:
+            data = _opgg_get(f"/api/{region}/champions/{mode}/{champ_id}/{pp}", {"tier": tier})
+            if data:
+                pos = pp
+                break
+    if data:
+        _opgg_cache[cache_key] = data
+        _log(f"OPGG >> 取得英雄 {champ_id} 攻略（{mode}/{pos}）")
+    return data
+
+
+@eel.expose
+def opgg_get_tier(mode: str = "ranked", tier: str = "all") -> list:
+    """取得英雄梯隊列表（強度排行）。"""
+    region = "kr"
+    data = _opgg_get(f"/api/{region}/champions/{mode}", {"tier": tier})
+    return data if isinstance(data, list) else data.get("data", []) if isinstance(data, dict) else []
 
 
 def _fetch_player_games_sgp(puuid: str, count: int = 20) -> list:
@@ -957,6 +1023,49 @@ def _save_tagged_players():
         _log(f"TAGGED_SAVE_ERR >> {e}")
 
 
+# ── 自動化偏好儲存層 ───────────────────────────────────────────────────
+def _save_prefs():
+    """將自動化開關偏好寫回磁碟。"""
+    try:
+        os.makedirs(os.path.dirname(_PREFS_FILE), exist_ok=True)
+        with open(_PREFS_FILE, "w", encoding="utf-8") as f:
+            json.dump({
+                "autoAccept":     _auto_accept,
+                "autoPick":       _auto_pick,
+                "autoPickChamp":  _auto_pick_champ_id,
+                "autoBan":        _auto_ban,
+                "autoBanChamp":   _auto_ban_champ_id,
+            }, f, ensure_ascii=False)
+    except Exception as e:
+        _log(f"PREFS_SAVE_ERR >> {e}")
+
+
+@eel.expose
+def get_prefs() -> dict:
+    """前端啟動時讀取已存偏好，用來恢復 UI 開關狀態。"""
+    try:
+        if os.path.exists(_PREFS_FILE):
+            with open(_PREFS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception as e:
+        _log(f"PREFS_LOAD_ERR >> {e}")
+    return {}
+
+
+def _restore_prefs():
+    """啟動時把已存偏好恢復到記憶體（後端狀態，前端 UI 由 get_prefs 同步）。"""
+    global _auto_accept, _auto_pick, _auto_pick_champ_id, _auto_ban, _auto_ban_champ_id
+    p = get_prefs()
+    if not p:
+        return
+    _auto_accept        = bool(p.get("autoAccept", False))
+    _auto_pick          = bool(p.get("autoPick", False))
+    _auto_pick_champ_id = int(p.get("autoPickChamp", 0) or 0)
+    _auto_ban           = bool(p.get("autoBan", False))
+    _auto_ban_champ_id  = int(p.get("autoBanChamp", 0) or 0)
+    _log(f"PREFS >> 恢復偏好 accept={_auto_accept} pick={_auto_pick} ban={_auto_ban}")
+
+
 def _get_tag(puuid: str) -> dict:
     """取得某玩家的標記資料，無則回傳空 dict。"""
     if not puuid:
@@ -1180,9 +1289,20 @@ def _load_rank_emblem_cache():
 
 
 # ── Exposed to JS ──────────────────────────────────────────────────────
+_init_lock = threading.Lock()
+_init_in_progress = False
+
+
 @eel.expose
 def initialize():
     global _client, _puuid, _account_id, _platform_id, _entitlement_token, _league_session_token
+    global _init_in_progress
+    # 重入防護：避免前端 load 與 reconnect 同時觸發造成重複初始化
+    with _init_lock:
+        if _init_in_progress:
+            _log("SYS >> 初始化進行中，略過重複呼叫")
+            return {"ok": bool(_client and _puuid)}
+        _init_in_progress = True
     _log("SYS >> Initializing connection to League Client...")
     try:
         _client     = LCUClient()
@@ -1234,6 +1354,7 @@ def initialize():
         _log(f"OPERATOR_PROFILE >> loaded: {full} // LVL {lvl} // ICON {icon_id}")
         _load_champ_summary()
         _load_tagged_players()
+        _restore_prefs()
         _start_ws()
 
         # ── 架構探勘報告（LeagueAkari 技術轉移藍圖）──────────────────────
@@ -1268,6 +1389,8 @@ def initialize():
     except Exception as e:
         _log(f"ERR >> {e}")
         return {"ok": False, "error": str(e)}
+    finally:
+        _init_in_progress = False
 
 
 @eel.expose
@@ -1705,6 +1828,7 @@ def set_auto_accept(enabled: bool):
     global _auto_accept
     _auto_accept = bool(enabled)
     _log(f"AUTO_ACCEPT_PROTOCOL >> {'ENGAGED' if _auto_accept else 'STANDBY'}")
+    _save_prefs()
 
 
 @eel.expose
@@ -1714,6 +1838,7 @@ def set_auto_pick(enabled: bool, champ_id: int):
     _auto_pick_champ_id = int(champ_id) if champ_id else 0
     _last_pick_action_id = -1
     _log(f"AUTO_PICK_PROTOCOL >> {'ENGAGED' if _auto_pick else 'STANDBY'} // ChampID={_auto_pick_champ_id}")
+    _save_prefs()
 
 
 @eel.expose
@@ -1723,6 +1848,7 @@ def set_auto_ban(enabled: bool, champ_id: int):
     _auto_ban_champ_id = int(champ_id) if champ_id else 0
     _last_ban_action_id = -1
     _log(f"AUTO_BAN_PROTOCOL >> {'ENGAGED' if _auto_ban else 'STANDBY'} // ChampID={_auto_ban_champ_id}")
+    _save_prefs()
 
 
 @eel.expose
@@ -1832,7 +1958,9 @@ def get_champion_list() -> list:
                     break
             except Exception as e:
                 _log(f"CHAMP_SUPPLEMENT_ERR >> {ep}: {e}")
-    result = [{"id": cid, "name": name} for cid, name in _champ_cache.items() if cid > 0 and cid in _champ_valid_ids]
+    # 真實英雄 ID 皆 < 3000，過濾掉末日機兵等特殊高 ID 變體
+    result = [{"id": cid, "name": name} for cid, name in _champ_cache.items()
+              if 0 < cid < 3000 and cid in _champ_valid_ids]
     result.sort(key=lambda x: x["name"])
     _log(f"CHAMP_LIST >> 回傳 {len(result)} 位英雄")
     return result
@@ -2158,7 +2286,9 @@ def _handle_gameflow_phase(phase):
 
     # 離開選角大廳：重置掃描鍵，讓下次進入選角時重新掃描
     if phase != "ChampSelect":
+        global _last_hovered_champ
         _last_scanned_team_key = ""
+        _last_hovered_champ = 0
 
     # ── 嚴格 phase 路由 ──────────────────────────────────────────────────
     if phase == "ReadyCheck":
@@ -2228,6 +2358,27 @@ async def _handle_champ_select(data: dict):
     combined = tagged_my + tagged_foe
     if combined:
         _maybe_trigger_lobby_scan(combined)
+
+    # ── 偵測自己選/預選的英雄，推播給前端自動載入 OP.GG 攻略 ──────────
+    global _last_hovered_champ
+    me = next((p for p in my_team if p.get("cellId") == local_cell), None)
+    if me:
+        cid = me.get("championId") or me.get("championPickIntent") or 0
+        pos = (me.get("assignedPosition") or "").lower()
+        if cid and cid != _last_hovered_champ:
+            _last_hovered_champ = cid
+            # 依佇列判斷模式（大亂鬥 queueId 450）
+            try:
+                q = (_client.get("/lol-gameflow/v1/session")
+                     .get("gameData", {}).get("queue", {}).get("id", 0))
+            except Exception:
+                q = 0
+            mode = "aram" if q == 450 else "ranked"
+            _log(f"OPGG ▶▶ 偵測到選角英雄 {cid}（{mode}），推播前端載入攻略")
+            try:
+                eel.on_my_champion_select(cid, mode, pos)()  # () 才會真正觸發；內部已無阻塞呼叫
+            except Exception as e:
+                _log(f"OPGG_PUSH_ERR >> {e}")
 
     for action in all_actions:
         if action.get("actorCellId") != local_cell:

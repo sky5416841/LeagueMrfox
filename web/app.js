@@ -45,6 +45,7 @@ function switchTab(tab) {
   document.getElementById(`tab-${tab}`).classList.remove('hidden');
   document.getElementById(`nav-${tab}`).classList.add('active');
   if (tab === 'analytics') loadAnalytics();
+  if (tab === 'opgg') initOpggPicker();
 }
 
 // ── 日誌 ───────────────────────────────────────────────────────────────
@@ -385,6 +386,132 @@ async function saveTag() {
   }
   closeTagModal();
   append_log(tag ? `TAGGED ▶▶ 已標記：${tag}` : 'TAGGED ▶▶ 已移除標記', true);
+}
+
+// ── OP.GG 英雄攻略 ─────────────────────────────────────────────────────
+const _POS_OPGG = { top:'top', jungle:'jungle', middle:'mid', bottom:'adc', utility:'support' };
+eel.expose(on_my_champion_select);
+function on_my_champion_select(champId, mode, position) {
+  // 立即返回讓後端解除阻塞，延後到下一個 tick 才呼叫後端拿資料（避免 eel 雙向死鎖）
+  setTimeout(async () => {
+    try {
+      switchTab('opgg');
+      await initOpggPicker();
+      const pos = _POS_OPGG[position] || '';
+      const champSel = document.getElementById('opgg-champ');
+      const modeSel  = document.getElementById('opgg-mode');
+      const posSel   = document.getElementById('opgg-pos');
+      if (champSel) champSel.value = String(champId);
+      if (modeSel)  modeSel.value  = mode || 'ranked';
+      if (posSel)   posSel.value   = pos;
+      await loadOpgg(champId, mode || 'ranked', pos);
+      append_log(`OPGG ▶▶ 自動載入選角英雄攻略`, true);
+    } catch (e) {
+      append_log('OPGG_ERR >> ' + e, true);
+    }
+  }, 50);
+}
+
+let _opggPickerReady = false;
+async function initOpggPicker() {
+  if (_opggPickerReady) return;
+  await _loadChampionList();
+  const sel = document.getElementById('opgg-champ');
+  if (!sel || !_champList.length) return;
+  sel.innerHTML = _champList
+    .slice().sort((a, b) => a.name.localeCompare(b.name, 'zh-Hant'))
+    .map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+  _opggPickerReady = true;
+}
+
+async function loadOpgg(champIdArg, modeArg, posArg) {
+  const body = document.getElementById('opgg-body');
+  const champId = champIdArg || parseInt(document.getElementById('opgg-champ').value, 10);
+  const mode = modeArg || document.getElementById('opgg-mode').value;
+  const pos = (posArg !== undefined) ? posArg : document.getElementById('opgg-pos').value;
+  if (!champId) return;
+  body.innerHTML = '<div class="text-[10px] text-slate-700 tracking-widest">// 查詢中...</div>';
+  try {
+    const d = await eel.opgg_get_champion(champId, mode, pos)();
+    if (!d || !d.summary) {
+      body.innerHTML = '<div class="text-[10px] text-slate-600">查無資料（該模式/位置可能無數據）</div>';
+      return;
+    }
+    _renderOpgg(body, d, champId);
+  } catch (e) {
+    body.innerHTML = '<div class="text-[10px] text-red-500">查詢失敗</div>';
+  }
+}
+
+function _opggWinRate(o) {
+  return o.play ? (o.win / o.play * 100).toFixed(1) : '0';
+}
+
+const _TIER_LABEL = { 1:'T1', 2:'T2', 3:'T3', 4:'T4', 5:'T5' };
+const _SKILL_COLOR = { Q:'#60a5fa', W:'#4ade80', E:'#fbbf24', R:'#f87171' };
+
+function _renderOpgg(body, d, champId) {
+  const spells = (d.summoner_spells || [])[0];
+  const rune   = (d.runes || [])[0];
+  const core   = (d.core_items || [])[0];
+  const boots  = (d.boots || [])[0];
+  const starter= (d.starter_items || [])[0];
+  const lastIt = (d.last_items || [])[0];
+  const mastery= (d.skill_masteries || [])[0];
+  const skill  = (d.skills || [])[0];
+  const counters = (d.counters || []).slice(0, 5);
+
+  const iconRow = (cls, ids) => (ids || []).map(id =>
+    `<img class="${cls}" src="${IMG_PH}" data-id="${id}" ${IMG_ERR}>`).join('');
+
+  // 英雄強度摘要
+  const avg = (d.summary && d.summary.average_stats) || null;
+  let summaryHtml = '';
+  if (avg) {
+    const t = _TIER_LABEL[avg.tier] || `T${avg.tier}`;
+    summaryHtml = `<div class="opgg-summary">
+      <span class="opgg-tier opgg-tier-${avg.tier}">${t}</span>
+      <span class="opgg-stat">勝率 <b>${(avg.win_rate*100).toFixed(1)}%</b></span>
+      <span class="opgg-stat">登場 <b>${(avg.pick_rate*100).toFixed(1)}%</b></span>
+      ${avg.ban_rate != null ? `<span class="opgg-stat">禁用 <b>${(avg.ban_rate*100).toFixed(1)}%</b></span>` : ''}
+      <span class="opgg-stat">KDA <b>${(avg.kda||0).toFixed(2)}</b></span>
+    </div>`;
+  }
+
+  // 技能主點優先（QWE）+ 加點順序
+  const masteryHtml = mastery ? `<div class="opgg-skill-pri">
+    ${(mastery.ids||[]).map((s,i) => `<span class="opgg-skill-key" style="border-color:${_SKILL_COLOR[s]};color:${_SKILL_COLOR[s]}">${s}</span>${i<mastery.ids.length-1?'<span class="opgg-arrow">›</span>':''}`).join('')}
+  </div>` : '';
+  const orderHtml = skill ? `<div class="opgg-skill-order">
+    ${(skill.order||[]).map(s => `<span class="opgg-skill-cell" style="color:${_SKILL_COLOR[s]}">${s}</span>`).join('')}
+  </div>` : '';
+
+  // 剋星（對位勝率低=被剋）
+  const counterHtml = counters.length ? counters.map(c => {
+    const wr = c.play ? (c.win/c.play*100).toFixed(0) : 0;
+    return `<div class="opgg-counter" title="對 ${_champNameById(c.champion_id)} 勝率 ${wr}%">
+      <img class="opgg-counter-img" src="${IMG_PH}" data-champid="${c.champion_id}" ${IMG_ERR}>
+      <span class="opgg-counter-wr">${wr}%</span></div>`;
+  }).join('') : '';
+
+  body.innerHTML = `
+    ${summaryHtml}
+    <div class="opgg-grid">
+      ${spells ? `<div class="opgg-block"><div class="opgg-block-hdr">召喚師技能 <span class="opgg-wr">${_opggWinRate(spells)}% 勝</span></div><div class="opgg-icons">${iconRow('opgg-spell', spells.ids)}</div></div>` : ''}
+      ${rune ? `<div class="opgg-block"><div class="opgg-block-hdr">主流符文 <span class="opgg-wr">${_opggWinRate(rune)}% 勝</span></div><div class="opgg-icons">${iconRow('opgg-rune', rune.primary_rune_ids)}<span class="opgg-sep">|</span>${iconRow('opgg-rune', rune.secondary_rune_ids)}</div></div>` : ''}
+      ${(masteryHtml||orderHtml) ? `<div class="opgg-block"><div class="opgg-block-hdr">技能加點${mastery?` <span class="opgg-wr">${_opggWinRate(mastery)}% 勝</span>`:''}</div>${masteryHtml}${orderHtml}</div>` : ''}
+      ${starter ? `<div class="opgg-block"><div class="opgg-block-hdr">起手裝 <span class="opgg-wr">${_opggWinRate(starter)}% 勝</span></div><div class="opgg-icons">${iconRow('opgg-item', starter.ids)}</div></div>` : ''}
+      ${core ? `<div class="opgg-block"><div class="opgg-block-hdr">核心裝 <span class="opgg-wr">${_opggWinRate(core)}% 勝</span></div><div class="opgg-icons">${iconRow('opgg-item', core.ids)}</div></div>` : ''}
+      ${boots ? `<div class="opgg-block"><div class="opgg-block-hdr">鞋子 <span class="opgg-wr">${_opggWinRate(boots)}% 勝</span></div><div class="opgg-icons">${iconRow('opgg-item', boots.ids)}</div></div>` : ''}
+      ${lastIt ? `<div class="opgg-block"><div class="opgg-block-hdr">最終裝備 <span class="opgg-wr">${_opggWinRate(lastIt)}% 勝</span></div><div class="opgg-icons">${iconRow('opgg-item', lastIt.ids)}</div></div>` : ''}
+      ${counterHtml ? `<div class="opgg-block"><div class="opgg-block-hdr">剋星（對位勝率低）</div><div class="opgg-icons">${counterHtml}</div></div>` : ''}
+    </div>`;
+
+  // 載入圖示
+  body.querySelectorAll('.opgg-item').forEach(async img => { img.src = await eel.get_item_image_base64_by_id(parseInt(img.dataset.id))() || IMG_PH; });
+  body.querySelectorAll('.opgg-rune').forEach(async img => { img.src = await eel.get_perk_image_base64_by_id(parseInt(img.dataset.id))() || IMG_PH; });
+  body.querySelectorAll('.opgg-spell').forEach(async img => { img.src = await eel.get_spell_image_base64_by_id(parseInt(img.dataset.id))() || IMG_PH; });
+  body.querySelectorAll('.opgg-counter-img').forEach(img => _loadChampIcon(parseInt(img.dataset.champid), img));
 }
 
 // ── 英雄選擇器 ─────────────────────────────────────────────────────────
@@ -1300,7 +1427,7 @@ async function doReconnect() {
 
 // ── 初始化 ─────────────────────────────────────────────────────────────
 window.addEventListener('load', async () => {
-  append_log('SYS >> LeagueMrfox V1.3 初始化完成');
+  append_log('SYS >> LeagueMrfox V1.4 初始化完成');
 
   // 自訂標題列按鈕
   const tbMin = document.getElementById('tb-min');
@@ -1333,7 +1460,33 @@ window.addEventListener('load', async () => {
     const data = await eel.initialize()();
     updateUI(data);
     if (data && data.ok) await _loadChampionList();
+    await restorePrefs();
   } catch (err) {
     append_log(`JS_ERR >> ${err}`, true);
   }
 });
+
+// ── 啟動時恢復自動化偏好（記住上次設定）────────────────────────────────
+async function restorePrefs() {
+  try {
+    const p = await eel.get_prefs()();
+    if (!p) return;
+    // 先設好選角/禁角英雄，再開啟對應開關（toggle 會同步 UI + 後端）
+    if (p.autoPickChamp) {
+      autoPickChampId = p.autoPickChamp;
+      const n = _champNameById(p.autoPickChamp);
+      const inp = document.getElementById('ap-champ-search'); if (inp) inp.value = n;
+      const h = document.getElementById('ap-champ-hint'); if (h) h.textContent = `ID=${p.autoPickChamp}`;
+    }
+    if (p.autoBanChamp) {
+      autoBanChampId = p.autoBanChamp;
+      const n = _champNameById(p.autoBanChamp);
+      const inp = document.getElementById('ab-champ-search'); if (inp) inp.value = n;
+      const h = document.getElementById('ab-champ-hint'); if (h) h.textContent = `ID=${p.autoBanChamp}`;
+    }
+    if (p.autoAccept && !autoAcceptEnabled) toggleAutoAccept();
+    if (p.autoPick   && !autoPickEnabled)   toggleAutoPick();
+    if (p.autoBan    && !autoBanEnabled)    toggleAutoBan();
+    if (p.autoAccept || p.autoPick || p.autoBan) append_log('PREFS ▶▶ 已恢復上次的自動化設定', true);
+  } catch (e) {}
+}

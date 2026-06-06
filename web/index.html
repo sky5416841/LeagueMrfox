@@ -9,7 +9,7 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=28">
+  <link rel="stylesheet" href="style.css?v=34">
 </head>
 <body class="bg-[#020617] h-screen overflow-hidden select-none flex flex-col">
 
@@ -20,7 +20,7 @@
   <div class="titlebar-left">
     <img src="avatar.png?v=2" class="titlebar-icon" alt="">
     <span class="titlebar-title">LeagueMrfox</span>
-    <span class="titlebar-ver">v1.3</span>
+    <span class="titlebar-ver">v1.4</span>
   </div>
   <div class="titlebar-controls">
     <button class="titlebar-btn" id="tb-min" title="最小化">&#x2013;</button>
@@ -40,7 +40,7 @@
       <span class="text-cyan-400 text-xs">▶▶</span>
       <div>
         <div class="text-cyan-300 text-sm tracking-[0.2em] glow-cyan">[ LeagueMrfox ]</div>
-        <div class="text-[9px] text-slate-600 tracking-widest mt-0.5">V1.3 // CYBERPUNK EDITION</div>
+        <div class="text-[9px] text-slate-600 tracking-widest mt-0.5">V1.4 // CYBERPUNK EDITION</div>
       </div>
     </div>
 
@@ -70,6 +70,12 @@
         <span class="nav-icon">📡</span>
         <span class="nav-label">對戰</span>
         <span class="nav-tag">Live</span>
+      </button>
+
+      <button id="nav-opgg" class="nav-item" onclick="switchTab('opgg')">
+        <span class="nav-icon">📖</span>
+        <span class="nav-label">英雄攻略</span>
+        <span class="nav-tag">OP.GG</span>
       </button>
 
       <button id="nav-logs" class="nav-item" onclick="switchTab('logs')">
@@ -387,6 +393,35 @@
 
     </section>
 
+    <!-- ── 英雄攻略 (OP.GG) Tab ── -->
+    <section id="tab-opgg" class="tab-section flex-1 min-h-0 flex-col gap-3 hidden">
+      <div class="panel shrink-0">
+        <div class="panel-header">// 英雄攻略 <span class="text-slate-700 text-[9px]">資料來源 OP.GG</span></div>
+        <div class="px-5 py-3 flex items-center gap-3 flex-wrap">
+          <select id="opgg-champ" class="opgg-select"></select>
+          <select id="opgg-mode" class="opgg-select">
+            <option value="ranked">排位 / 一般</option>
+            <option value="aram" selected>大亂鬥</option>
+            <option value="arena">競技場</option>
+          </select>
+          <select id="opgg-pos" class="opgg-select">
+            <option value="">自動位置</option>
+            <option value="top">上路</option>
+            <option value="jungle">打野</option>
+            <option value="mid">中路</option>
+            <option value="adc">下路</option>
+            <option value="support">輔助</option>
+          </select>
+          <button onclick="loadOpgg()" class="opgg-btn">查詢</button>
+        </div>
+      </div>
+      <div class="panel flex-1 min-h-0 overflow-hidden flex flex-col">
+        <div id="opgg-body" class="flex-1 overflow-y-auto px-5 py-4 custom-scroll">
+          <div class="text-[10px] text-slate-700 tracking-widest">— 選擇英雄後按查詢 —</div>
+        </div>
+      </div>
+    </section>
+
     <!-- ── 日誌 Tab ── -->
     <section id="tab-logs" class="tab-section flex-1 min-h-0 flex flex-col gap-3 hidden">
       <div class="panel flex-1 min-h-0 flex flex-col">
@@ -464,6 +499,6 @@
   </div>
 </div>
 
-<script src="app.js?v=28"></script>
+<script src="app.js?v=37"></script>
 </body>
 </html>
