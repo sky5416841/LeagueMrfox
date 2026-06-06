@@ -435,6 +435,53 @@ def get_ban_helper(mode: str = "ranked", position: str = "", limit: int = 8) -> 
         return []
 
 
+# OP.GG 位置代碼 → 內部統一鍵
+_OPGG_POS_KEY = {
+    "TOP": "TOP", "JUNGLE": "JUNGLE", "MID": "MID", "MIDDLE": "MID",
+    "ADC": "ADC", "BOTTOM": "ADC", "BOT": "ADC",
+    "SUPPORT": "SUPPORT", "UTILITY": "SUPPORT",
+}
+
+
+@eel.expose
+def get_ban_helper_by_lane(mode: str = "ranked", per_lane: int = 4) -> dict:
+    """依線路分組的建議禁用：每條線回傳當前 meta 最強的數個英雄。
+    來源 OP.GG 各英雄 positions[] 的分線梯隊（tier/rank），依梯隊強度排序。
+    """
+    out = {"TOP": [], "JUNGLE": [], "MID": [], "ADC": [], "SUPPORT": []}
+    try:
+        tier_list = opgg_get_tier(mode)
+        buckets = {k: [] for k in out}
+        for it in (tier_list or []):
+            cid = it.get("id") or it.get("championId") or 0
+            if not cid:
+                continue
+            for pos in (it.get("positions") or []):
+                pk = _OPGG_POS_KEY.get((pos.get("name") or "").upper())
+                if not pk:
+                    continue
+                st = pos.get("stats") or {}
+                td = st.get("tier_data") or {}
+                win = float(st.get("win_rate", 0) or 0)
+                ban = float(st.get("ban_rate", 0) or 0)
+                buckets[pk].append({
+                    "championId":   cid,
+                    "championName": _get_champ_name(cid),
+                    "winRate":  round(win * 100, 1) if win <= 1 else round(win, 1),
+                    "banRate":  round(ban * 100, 1) if ban <= 1 else round(ban, 1),
+                    "tier":     td.get("tier", 9),
+                    "rank":     td.get("rank", 999),
+                })
+        for pk, arr in buckets.items():
+            # 梯隊 tier 越小越強、同 tier 比 rank
+            arr.sort(key=lambda r: (r["tier"], r["rank"]))
+            out[pk] = arr[:per_lane]
+        return out
+    except Exception as e:
+        _log(f"BAN_LANE_ERR >> {e}")
+        return out
+
+
 def _fetch_player_games_sgp(puuid: str, count: int = 20) -> list:
     """用本機帳號的 entitlement token 搭配目標玩家 PUUID 查詢 SGP 戰績。
     可查任意玩家（不限自己），突破 LCU 僅能看自己的 20 筆限制。
@@ -1458,6 +1505,10 @@ def _get_champ_name(champ_id: int) -> str:
                 return name
         except Exception:
             continue
+    # 備援：LCU champion-summary 偶爾 404，改用 Data Dragon metadata 的中文名
+    meta_name = (_champ_meta.get(champ_id, {}).get("name") or "").strip()
+    if meta_name:
+        return meta_name
     return f"#{champ_id}"
 
 
@@ -1677,6 +1728,13 @@ def initialize():
         _load_tagged_players()
         _restore_prefs()
         _start_ws()
+
+        # 若啟動／重連時已在選角中，主動顯示戰術浮窗（WS 不會補發 phase 轉換事件）
+        try:
+            if _overlay_window and _client.get("/lol-gameflow/v1/gameflow-phase") == "ChampSelect":
+                _overlay_window.show()
+        except Exception:
+            pass
 
         return {
             "ok":     True,
@@ -2853,11 +2911,11 @@ if __name__ == "__main__":
         _overlay_window = webview.create_window(
             "LeagueMrfox 選角戰術",
             f"http://localhost:{_EEL_PORT}/overlay.html?v={_cache_bust}",
-            width=360,
-            height=600,
+            width=480,
+            height=860,
             frameless=True,
             on_top=True,
-            resizable=False,
+            resizable=True,
             hidden=True,
             x=40, y=40,
         )

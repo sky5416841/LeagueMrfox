@@ -4,7 +4,7 @@ body {
   background: #020617;
   color: #cbd5e1;
   font-family: 'Share Tech Mono', 'Consolas', monospace;
-  font-size: 12px;
+  font-size: 13px;
   overflow: hidden;
   border: 1px solid rgba(6,182,212,0.35);
   display: flex;
@@ -13,13 +13,13 @@ body {
 }
 
 #ov-titlebar {
-  height: 30px;
+  height: 36px;
   background: linear-gradient(90deg, rgba(8,47,73,0.6), #020617);
   border-bottom: 1px solid rgba(6,182,212,0.3);
   display: flex; align-items: center; justify-content: space-between;
   padding: 0 10px; flex-shrink: 0;
 }
-.ov-title { color: #22d3ee; font-size: 11px; letter-spacing: .12em; }
+.ov-title { color: #22d3ee; font-size: 13px; letter-spacing: .12em; }
 .ov-phase {
   font-size: 8px; color: #0e7490; letter-spacing: .15em;
   border: 1px solid rgba(6,182,212,0.25); padding: 1px 5px;
@@ -30,50 +30,61 @@ body {
 #ov-body::-webkit-scrollbar-thumb { background: rgba(6,182,212,0.3); }
 
 .ov-section { border: 1px solid rgba(6,182,212,0.16); background: #020617; padding: 7px 9px; }
-.ov-sec-hdr { font-size: 9px; color: #0e7490; letter-spacing: .12em; margin-bottom: 7px; }
-.ov-sub { color: #334155; font-size: 8px; }
-.ov-empty { color: #475569; font-size: 10px; text-align: center; padding: 8px 0; letter-spacing: .08em; }
+.ov-sec-hdr { font-size: 11px; color: #0e7490; letter-spacing: .12em; margin-bottom: 8px; }
+.ov-sub { color: #334155; font-size: 9px; }
+.ov-empty { color: #475569; font-size: 11px; text-align: center; padding: 8px 0; letter-spacing: .08em; }
 
 /* 陣容比較 */
 .ov-team { margin-bottom: 9px; }
 .ov-team:last-child { margin-bottom: 0; }
 .ov-team-hdr {
   display: flex; justify-content: space-between; align-items: baseline;
-  font-size: 9px; margin-bottom: 4px; letter-spacing: .06em;
+  font-size: 11px; margin-bottom: 5px; letter-spacing: .06em;
 }
 .ov-team-ally  .ov-team-name { color: #38bdf8; }
 .ov-team-enemy .ov-team-name { color: #fb7185; }
 .ov-team-meta { color: #475569; font-size: 8px; }
 
 /* AD/AP 雙色傷害條 */
-.ov-dmgbar { height: 14px; display: flex; border: 1px solid rgba(51,65,85,0.5); overflow: hidden; }
+.ov-dmgbar { height: 18px; display: flex; border: 1px solid rgba(51,65,85,0.5); overflow: hidden; }
 .ov-dmg-ad { background: linear-gradient(90deg,#f59e0b,#d97706); display:flex; align-items:center; justify-content:center; }
 .ov-dmg-ap { background: linear-gradient(90deg,#3b82f6,#2563eb); display:flex; align-items:center; justify-content:center; }
-.ov-dmgbar span { font-size: 8px; color: #020617; font-weight: 700; }
-.ov-team-stats { display: flex; gap: 8px; margin-top: 4px; font-size: 9px; color: #94a3b8; }
+.ov-dmgbar span { font-size: 10px; color: #020617; font-weight: 700; }
+.ov-team-stats { display: flex; gap: 10px; margin-top: 5px; font-size: 11px; color: #94a3b8; }
 .ov-team-stats b { color: #e2e8f0; }
 .ov-roles { display: flex; gap: 3px; flex-wrap: wrap; margin-top: 4px; }
 .ov-role-chip {
-  font-size: 8px; color: #94a3b8; background: rgba(30,41,59,0.6);
-  border: 1px solid rgba(51,65,85,0.5); padding: 0 4px; border-radius: 2px;
+  font-size: 10px; color: #94a3b8; background: rgba(30,41,59,0.6);
+  border: 1px solid rgba(51,65,85,0.5); padding: 1px 5px; border-radius: 2px;
 }
 
 /* 戰術旗標 */
-.ov-flag { font-size: 9px; padding: 3px 6px; margin-bottom: 3px; border-left: 2px solid; letter-spacing: .04em; }
+.ov-flag { font-size: 11px; padding: 4px 7px; margin-bottom: 4px; border-left: 3px solid; letter-spacing: .04em; }
 .ov-flag:last-child { margin-bottom: 0; }
 .ov-flag-warn { border-color: #fb923c; color: #fdba74; background: rgba(251,146,60,0.08); }
 .ov-flag-good { border-color: #4ade80; color: #86efac; background: rgba(74,222,128,0.08); }
 .ov-flag-info { border-color: #64748b; color: #94a3b8; background: rgba(100,116,139,0.08); }
 
 /* 英雄圖示列 */
-.ov-champ-row { display: flex; gap: 4px; flex-wrap: wrap; }
+.ov-champ-row { display: flex; gap: 5px; flex-wrap: wrap; }
 .ov-champ {
-  width: 34px; text-align: center;
+  width: 40px; text-align: center;
 }
 .ov-champ img {
-  width: 32px; height: 32px; border-radius: 3px;
+  width: 38px; height: 38px; border-radius: 3px;
   border: 1px solid rgba(6,182,212,0.25); background: #0f172a; object-fit: cover;
 }
 .ov-champ.img-err img, .ov-champ img.img-err { opacity: .25; }
-.ov-champ-name { font-size: 7px; color: #64748b; margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ov-banhelp-wr { font-size: 7px; color: #4ade80; }
+.ov-champ-name { font-size: 8px; color: #64748b; margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ov-banhelp-wr { font-size: 9px; color: #4ade80; }
+
+/* 建議禁用：依線路分組 */
+.ov-lane-row { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
+.ov-lane-row:last-child { margin-bottom: 0; }
+.ov-lane-label {
+  width: 38px; flex-shrink: 0; text-align: center;
+  font-size: 12px; color: #67e8f9; letter-spacing: .04em;
+  border: 1px solid rgba(6,182,212,0.3); background: rgba(8,47,73,0.3);
+  padding: 10px 0;
+}
+.ov-lane-champs { display: flex; gap: 5px; flex-wrap: wrap; flex: 1; }

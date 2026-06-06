@@ -74,20 +74,30 @@ function on_champ_select_update(state) {
   }
 }
 
-// 進入時載入 meta 推薦禁用
+// 進入時載入 meta 推薦禁用（依線路分組）
+const LANE_LABEL = { TOP: '上路', JUNGLE: '打野', MID: '中路', ADC: '下路', SUPPORT: '輔助' };
+const LANE_ORDER = ['TOP', 'JUNGLE', 'MID', 'ADC', 'SUPPORT'];
+
 async function _loadBanHelper() {
-  const el = document.getElementById('ov-banhelp');
+  const el = document.getElementById('ov-banhelp-lanes');
   try {
-    const list = await eel.get_ban_helper('ranked', '', 6)();
-    if (!list || !list.length) {
+    const lanes = await eel.get_ban_helper_by_lane('ranked', 4)();
+    if (!lanes || !LANE_ORDER.some(k => (lanes[k] || []).length)) {
       el.innerHTML = '<div class="ov-empty">暫無資料</div>';
       return;
     }
-    el.innerHTML = list.map(c =>
-      `<div class="ov-champ" title="${c.championName} · 勝率 ${c.winRate}%">
-        <img src="${CHAMP_ICON(c.championId)}" onerror="${ICON_ERR}" alt="">
-        <div class="ov-banhelp-wr">${c.winRate}%</div>
-      </div>`).join('');
+    el.innerHTML = LANE_ORDER.map(k => {
+      const arr = lanes[k] || [];
+      const cells = arr.map(c =>
+        `<div class="ov-champ" title="${c.championName} · 勝率 ${c.winRate}%">
+          <img src="${CHAMP_ICON(c.championId)}" onerror="${ICON_ERR}" alt="">
+          <div class="ov-banhelp-wr">${c.winRate}%</div>
+        </div>`).join('');
+      return `<div class="ov-lane-row">
+        <div class="ov-lane-label">${LANE_LABEL[k]}</div>
+        <div class="ov-lane-champs">${cells || '<span class="ov-empty">—</span>'}</div>
+      </div>`;
+    }).join('');
   } catch (e) {
     el.innerHTML = '<div class="ov-empty">載入失敗</div>';
   }
