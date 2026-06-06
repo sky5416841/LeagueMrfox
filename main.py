@@ -4,8 +4,10 @@ import sys
 import time
 import json
 import ssl
+import socket
 import base64
 import asyncio
+import datetime
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
@@ -53,7 +55,9 @@ _last_scanned_team_key  = ''   # 防止對同一場大廳重複掃描
 _lobby_scan_in_progress = False
 _ingame_scan_in_progress = False  # 遊戲中 10 人雷達
 _webview_window = None             # pywebview 原生視窗參考（自訂標題列控制用）
+_overlay_window = None             # 選角戰術常駐浮窗（always-on-top，選角時顯示）
 _last_hovered_champ = 0             # 選角階段上次偵測到自己選的英雄（避免重複推播）
+_last_champsel_key  = ''           # 選角戰術推播去重鍵（雙方已選英雄集合）
 _EMPTY_PUUID = '00000000-0000-0000-0000-000000000000'  # 空位/匿名槽特徵 PUUID（LeagueAkari 過濾標準）
 
 # 本地戰績快取路徑（data/ 已在 .gitignore，個人數據不上傳）
@@ -110,12 +114,31 @@ _entitlement_token    = ''   # Riot Entitlements JWT（SGP matchHistory 用）
 _league_session_token = ''   # League Session Token（SGP summoner-ledge 用）
 
 # ── Helper ─────────────────────────────────────────────────────────────
-_log_file = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "debug.log"), "a", encoding="utf-8", buffering=1)
+_LOG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "debug.log")
+_EEL_PORT = 8000   # eel HTTP/WebSocket server 埠號（亦用於單一實例偵測）
+
+
+def _rotate_log(path: str, max_bytes: int = 2_000_000):
+    """啟動時若 log 超過上限，轉存為 .1 備份後重新開始，避免無限增長。"""
+    try:
+        if os.path.exists(path) and os.path.getsize(path) > max_bytes:
+            bak = path + ".1"
+            if os.path.exists(bak):
+                os.remove(bak)
+            os.replace(path, bak)
+    except Exception:
+        pass
+
+
+_rotate_log(_LOG_PATH)
+_log_file = open(_LOG_PATH, "a", encoding="utf-8", buffering=1)
 
 def _log(msg: str):
-    import datetime
     line = f"[{datetime.datetime.now().strftime('%H:%M:%S')}] {msg}"
-    _log_file.write(line + "\n")
+    try:
+        _log_file.write(line + "\n")
+    except Exception:
+        pass
     try:
         eel.append_log(msg)()
     except Exception:
@@ -224,6 +247,192 @@ def opgg_get_tier(mode: str = "ranked", tier: str = "all") -> list:
     region = "kr"
     data = _opgg_get(f"/api/{region}/champions/{mode}", {"tier": tier})
     return data if isinstance(data, list) else data.get("data", []) if isinstance(data, dict) else []
+
+
+# ── 英雄 Metadata（Data Dragon）：傷害類型 / 職業，供選角戰術分析 ───────────
+_DDRAGON_VER_URL = "https://ddragon.leagueoflegends.com/api/versions.json"
+_CHAMP_META_FILE = os.path.join(os.path.dirname(__file__), "data", "champ_meta.json")
+_champ_meta: dict[int, dict] = {}   # championId -> {name, tags, attack, magic, defense, dmgType}
+_champ_meta_loaded = False
+
+# 職業中文對照
+_ROLE_ZH = {
+    "Tank": "坦克", "Fighter": "鬥士", "Mage": "法師",
+    "Marksman": "射手", "Assassin": "刺客", "Support": "輔助",
+}
+# 強開團 / 硬控英雄（championId 白名單，補 Data Dragon tags 無法表達的開團資訊）
+# 保守收錄公認的強開團英雄，作為「開團能力」啟發式提示。
+_ENGAGE_CHAMPS = {
+    54, 89, 111, 32, 113, 154, 516, 526, 12, 57, 59, 254, 120, 62, 85, 3,
+    131, 497, 412, 22, 79, 14, 72, 518, 56, 164, 106, 127, 9, 19, 20, 154,
+    875, 555, 200, 33, 421, 60, 102,
+}
+
+
+def _classify_dmg_type(attack: int, magic: int) -> str:
+    """依 Data Dragon info.attack / info.magic 判斷主要傷害類型。"""
+    if attack >= magic + 3:
+        return "AD"
+    if magic >= attack + 3:
+        return "AP"
+    return "Mixed"
+
+
+def _fetch_champ_meta() -> dict:
+    """從 Data Dragon 下載英雄 metadata 並寫入本地快取。失敗回傳現有 _champ_meta。"""
+    global _champ_meta, _champ_meta_loaded
+    try:
+        ver  = requests.get(_DDRAGON_VER_URL, timeout=8).json()[0]
+        url  = f"https://ddragon.leagueoflegends.com/cdn/{ver}/data/zh_TW/championFull.json"
+        data = requests.get(url, timeout=15).json().get("data", {})
+        meta: dict[int, dict] = {}
+        for c in data.values():
+            cid = int(c.get("key", 0) or 0)
+            if not cid:
+                continue
+            info = c.get("info", {}) or {}
+            atk  = info.get("attack", 0); mag = info.get("magic", 0); dfn = info.get("defense", 0)
+            meta[cid] = {
+                "name":    c.get("name", ""),
+                "tags":    c.get("tags", []) or [],
+                "attack":  atk, "magic": mag, "defense": dfn,
+                "dmgType": _classify_dmg_type(atk, mag),
+            }
+        if meta:
+            _champ_meta = meta
+            _champ_meta_loaded = True
+            try:
+                with open(_CHAMP_META_FILE, "w", encoding="utf-8") as f:
+                    json.dump({"version": ver,
+                               "champs": {str(k): v for k, v in meta.items()}},
+                              f, ensure_ascii=False)
+            except Exception:
+                pass
+            _log(f"CHAMP_META >> 從 Data Dragon 下載 {len(meta)} 位英雄 (patch {ver})")
+    except Exception as e:
+        _log(f"CHAMP_META >> 下載失敗: {e}")
+    return _champ_meta
+
+
+def _load_champ_meta(force: bool = False) -> dict:
+    """載入英雄 metadata：優先讀本地快取，缺檔才從 Data Dragon 下載。"""
+    global _champ_meta, _champ_meta_loaded
+    if _champ_meta_loaded and not force:
+        return _champ_meta
+    try:
+        if os.path.exists(_CHAMP_META_FILE):
+            with open(_CHAMP_META_FILE, encoding="utf-8") as f:
+                cached = json.load(f)
+            _champ_meta = {int(k): v for k, v in (cached.get("champs") or {}).items()}
+            if _champ_meta:
+                _champ_meta_loaded = True
+                _log(f"CHAMP_META >> 從快取載入 {len(_champ_meta)} 位英雄 "
+                     f"(patch {cached.get('version', '?')})")
+                return _champ_meta
+    except Exception as e:
+        _log(f"CHAMP_META >> 快取讀取失敗: {e}")
+    return _fetch_champ_meta()
+
+
+def _analyze_team_comp(champ_ids: list[int]) -> dict:
+    """分析一支隊伍的陣容組成：傷害類型、職業分布、前排數、開團數。
+    回傳含各項統計與旗標的 dict；champ_ids 為已選英雄（0 代表未選，忽略）。
+    """
+    meta = _load_champ_meta()
+    picks = [c for c in champ_ids if c and c > 0]
+    ad = ap = mixed = frontline = engage = 0
+    roles: dict[str, int] = {}
+    atk_sum = mag_sum = 0
+    detail = []
+    for cid in picks:
+        m = meta.get(cid, {})
+        dmg = m.get("dmgType", "")
+        if   dmg == "AD":  ad += 1
+        elif dmg == "AP":  ap += 1
+        elif dmg == "Mixed": mixed += 1
+        atk_sum += m.get("attack", 0)
+        mag_sum += m.get("magic", 0)
+        tags = m.get("tags", [])
+        if "Tank" in tags or m.get("defense", 0) >= 7:
+            frontline += 1
+        if cid in _ENGAGE_CHAMPS:
+            engage += 1
+        primary = tags[0] if tags else ""
+        if primary:
+            roles[primary] = roles.get(primary, 0) + 1
+        detail.append({"championId": cid, "name": m.get("name", f"#{cid}"),
+                       "dmgType": dmg, "tags": tags})
+
+    n = len(picks)
+    tot_dmg = atk_sum + mag_sum
+    ad_pct = round(atk_sum / tot_dmg * 100) if tot_dmg else 50
+    ap_pct = 100 - ad_pct if tot_dmg else 50
+
+    # ── 戰術旗標（缺口提示）──────────────────────────────────────────────
+    flags = []
+    if n >= 3:
+        if frontline == 0:
+            flags.append({"level": "warn", "text": "缺乏前排（無坦克）"})
+        if ap == 0 and ad >= 2:
+            flags.append({"level": "warn", "text": "全物理陣容，敵方易疊護甲"})
+        elif ad == 0 and ap >= 2:
+            flags.append({"level": "warn", "text": "全魔法陣容，敵方易疊魔抗"})
+        if engage == 0:
+            flags.append({"level": "info", "text": "缺乏強開團，偏被動陣容"})
+        if frontline >= 2 and 30 <= ad_pct <= 70 and engage >= 1:
+            flags.append({"level": "good", "text": "陣容均衡（前排/傷害/開團兼具）"})
+
+    roles_zh = {_ROLE_ZH.get(k, k): v for k, v in roles.items()}
+    return {
+        "count":     n,
+        "ad":        ad, "ap": ap, "mixed": mixed,
+        "adPct":     ad_pct, "apPct": ap_pct,
+        "frontline": frontline, "engage": engage,
+        "roles":     roles_zh,
+        "flags":     flags,
+        "detail":    detail,
+    }
+
+
+@eel.expose
+def get_comp_analysis(my_champ_ids: list = None, enemy_champ_ids: list = None) -> dict:
+    """選角戰術分析：回傳我方與敵方陣容組成比較。"""
+    my  = _analyze_team_comp(my_champ_ids or [])
+    en  = _analyze_team_comp(enemy_champ_ids or [])
+    return {"myTeam": my, "enemyTeam": en}
+
+
+@eel.expose
+def get_ban_helper(mode: str = "ranked", position: str = "", limit: int = 8) -> list:
+    """選角禁用輔助：回傳當前 meta 強度最高的英雄（OP.GG 梯隊）作為 ban 建議。
+    敵方身分在選角階段被 Riot 隱藏，故改以 meta 強勢英雄作為通用 ban 目標。
+    """
+    try:
+        tier_list = opgg_get_tier(mode)
+        rows = []
+        for it in (tier_list or []):
+            cid = it.get("id") or it.get("championId") or 0
+            if not cid:
+                continue
+            st = it.get("average_stats") or it.get("stats") or it
+            win = st.get("win_rate") or st.get("winRate") or st.get("win") or 0
+            pick = st.get("pick_rate") or st.get("pickRate") or 0
+            ban  = st.get("ban_rate")  or st.get("banRate")  or 0
+            tier_rank = it.get("tier") or st.get("tier") or 0
+            rows.append({
+                "championId":   cid,
+                "championName": _get_champ_name(cid),
+                "winRate":  round(float(win) * 100, 1) if win and float(win) <= 1 else round(float(win or 0), 1),
+                "pickRate": round(float(pick) * 100, 1) if pick and float(pick) <= 1 else round(float(pick or 0), 1),
+                "banRate":  round(float(ban) * 100, 1) if ban and float(ban) <= 1 else round(float(ban or 0), 1),
+                "tier":     tier_rank,
+            })
+        # 以勝率 + 禁用率排序，取前 limit 個作為 ban 建議
+        rows.sort(key=lambda r: (r["winRate"] + r["banRate"]), reverse=True)
+        return rows[:limit]
+    except Exception as e:
+        _log(f"BAN_HELPER_ERR >> {e}")
+        return []
 
 
 def _fetch_player_games_sgp(puuid: str, count: int = 20) -> list:
@@ -532,6 +741,118 @@ def get_personal_overview(count: int = 20) -> dict:
     except Exception as e:
         _log(f"OVERVIEW_ERR >> {e}")
         return zero
+
+
+@eel.expose
+def get_match_dashboard(count: int = 50) -> dict:
+    """戰績數據儀表板：聚合近 count 場做視覺化。
+    回傳勝率累積走勢、近期手感、評級分布、佇列分布、KDA 趨勢、最佳/最差英雄。
+    """
+    empty = {"summary": {}, "winTrend": [], "recentForm": [], "gradeDist": [],
+             "queueDist": [], "kdaTrend": [], "bestChamps": [], "worstChamps": []}
+    if not _client or not _puuid:
+        return empty
+    try:
+        games = get_match_history(0, count)
+        games = [g for g in (games or []) if g.get("gameResult") != "REMAKE"]
+        if not games:
+            return empty
+
+        n      = len(games)
+        wins   = sum(1 for g in games if g.get("win"))
+        sumK   = sum(g.get("kills", 0)   for g in games)
+        sumD   = sum(g.get("deaths", 0)  for g in games)
+        sumA   = sum(g.get("assists", 0) for g in games)
+        sumDmg = sum(g.get("damage", 0)  for g in games)
+
+        # get_match_history 最新在前；走勢圖需由舊到新
+        chrono = list(reversed(games))
+
+        # 勝率累積走勢（由舊到新）
+        win_trend = []
+        cw = 0
+        for i, g in enumerate(chrono, 1):
+            cw += 1 if g.get("win") else 0
+            win_trend.append({"i": i, "winRate": round(cw / i * 100, 1)})
+
+        # KDA 逐場趨勢（由舊到新）
+        kda_trend = [
+            {"i": i, "kda": round((g.get("kills", 0) + g.get("assists", 0)) /
+                                  max(g.get("deaths", 0), 1), 2)}
+            for i, g in enumerate(chrono, 1)
+        ]
+
+        # 近期手感（最新 12 場，最新在前）
+        recent_form = [
+            {"win": bool(g.get("win")),
+             "championId":   g.get("championId", 0),
+             "championName": g.get("championName", ""),
+             "kda":   round((g.get("kills", 0) + g.get("assists", 0)) /
+                            max(g.get("deaths", 0), 1), 2),
+             "grade": g.get("grade", "")}
+            for g in games[:12]
+        ]
+
+        # 評級分布（S/A/B/C/D，依首字母歸類）
+        buckets = {"S": 0, "A": 0, "B": 0, "C": 0, "D": 0}
+        for g in games:
+            gr = (g.get("grade") or "").strip().upper()
+            if gr and gr[0] in buckets:
+                buckets[gr[0]] += 1
+        grade_dist = [{"grade": k, "count": v} for k, v in buckets.items()]
+
+        # 佇列分布（含各佇列勝率）
+        q_stats: dict[str, dict] = {}
+        for g in games:
+            q = g.get("queue") or "其他"
+            s = q_stats.setdefault(q, {"games": 0, "wins": 0})
+            s["games"] += 1
+            s["wins"]  += 1 if g.get("win") else 0
+        queue_dist = [
+            {"queue": k, "games": v["games"], "wins": v["wins"],
+             "winRate": round(v["wins"] / v["games"] * 100, 1)}
+            for k, v in sorted(q_stats.items(), key=lambda kv: -kv[1]["games"])
+        ]
+
+        # 英雄表現（≥2 場）→ 最佳 / 最差
+        champ: dict[int, dict] = {}
+        for g in games:
+            cid = g.get("championId", 0)
+            if not cid:
+                continue
+            c = champ.setdefault(cid, {"name": g.get("championName", f"#{cid}"),
+                                       "games": 0, "wins": 0, "k": 0, "d": 0, "a": 0})
+            c["games"] += 1
+            c["wins"]  += 1 if g.get("win") else 0
+            c["k"] += g.get("kills", 0); c["d"] += g.get("deaths", 0); c["a"] += g.get("assists", 0)
+        champ_rows = [
+            {"championId": cid, "name": c["name"], "games": c["games"], "wins": c["wins"],
+             "winRate": round(c["wins"] / c["games"] * 100, 1),
+             "kda": round((c["k"] + c["a"]) / max(c["d"], 1), 2)}
+            for cid, c in champ.items() if c["games"] >= 2
+        ]
+        best  = sorted(champ_rows, key=lambda r: (-r["winRate"], -r["games"]))[:5]
+        worst = sorted(champ_rows, key=lambda r: (r["winRate"], -r["games"]))[:5]
+
+        return {
+            "summary": {
+                "games": n, "wins": wins, "losses": n - wins,
+                "winRate": round(wins / n * 100, 1),
+                "kda": round((sumK + sumA) / max(sumD, 1), 2),
+                "avgKills": round(sumK / n, 1), "avgDeaths": round(sumD / n, 1),
+                "avgAssists": round(sumA / n, 1), "avgDamage": int(sumDmg / n),
+            },
+            "winTrend":    win_trend,
+            "kdaTrend":    kda_trend,
+            "recentForm":  recent_form,
+            "gradeDist":   grade_dist,
+            "queueDist":   queue_dist,
+            "bestChamps":  best,
+            "worstChamps": worst,
+        }
+    except Exception as e:
+        _log(f"DASHBOARD_ERR >> {e}")
+        return empty
 
 
 _TIER_ZH = {
@@ -1356,24 +1677,6 @@ def initialize():
         _load_tagged_players()
         _restore_prefs()
         _start_ws()
-
-        # ── 架構探勘報告（LeagueAkari 技術轉移藍圖）──────────────────────
-        _log("═══════════════════════════════════════════════════════")
-        _log("ARCH_REPORT >> LeagueAkari 核心功能探勘報告 v1.0")
-        _log("═══════════════════════════════════════════════════════")
-        _log("FEATURE_01 >> [自動符文套用] 原理：抓取 OP.GG / 遊戲內建")
-        _log("             推薦符文 ID → DELETE 現有符文頁 →")
-        _log("             POST /lol-perks/v1/pages 建立新符文頁")
-        _log("             觸發時機：選角後確認英雄 / 手動觸發按鈕")
-        _log("FEATURE_02 >> [選角大廳隊友查詢] 原理：champ-select session")
-        _log("             events 已訂閱 → 解析 participants[].summonerId →")
-        _log("             GET /lol-match-history/.../matches 抓近 5 場")
-        _log("             顯示於側邊欄彈出視窗（勝率 / 常用英雄）")
-        _log("FEATURE_03 >> [自動禁角 Auto-Ban] 原理：與 Auto-Pick 架構")
-        _log("             完全相同 → 偵測 type==ban、isInProgress==True →")
-        _log("             PATCH championId → POST complete 鎖定禁用")
-        _log("             設定頁新增禁角 ID 輸入框即可直接移植")
-        _log("═══════════════════════════════════════════════════════")
 
         return {
             "ok":     True,
@@ -2286,9 +2589,20 @@ def _handle_gameflow_phase(phase):
 
     # 離開選角大廳：重置掃描鍵，讓下次進入選角時重新掃描
     if phase != "ChampSelect":
-        global _last_hovered_champ
+        global _last_hovered_champ, _last_champsel_key
         _last_scanned_team_key = ""
         _last_hovered_champ = 0
+        _last_champsel_key = ""
+
+    # ── 選角戰術浮窗：進入選角顯示，離開隱藏（always-on-top）──────────────
+    try:
+        if _overlay_window:
+            if phase == "ChampSelect":
+                _overlay_window.show()
+            else:
+                _overlay_window.hide()
+    except Exception as e:
+        _log(f"OVERLAY_TOGGLE_ERR >> {e}")
 
     # ── 嚴格 phase 路由 ──────────────────────────────────────────────────
     if phase == "ReadyCheck":
@@ -2358,6 +2672,29 @@ async def _handle_champ_select(data: dict):
     combined = tagged_my + tagged_foe
     if combined:
         _maybe_trigger_lobby_scan(combined)
+
+    # ── 選角戰術中樞：解析雙方已選英雄 + 禁用，推播戰術分析給浮窗/主視窗 ──
+    global _last_champsel_key
+    try:
+        my_ids    = [p.get("championId") or 0 for p in my_team]
+        my_ids    = [c for c in my_ids if c > 0]
+        enemy_ids = [p.get("championId") or 0 for p in their_team]
+        enemy_ids = [c for c in enemy_ids if c > 0]
+        ban_ids   = [a.get("championId") for a in all_actions
+                     if a.get("type") == "ban" and a.get("completed")
+                     and (a.get("championId") or 0) > 0]
+        key = f"{sorted(my_ids)}|{sorted(enemy_ids)}|{sorted(ban_ids)}"
+        if key != _last_champsel_key:
+            _last_champsel_key = key
+            comp = get_comp_analysis(my_ids, enemy_ids)
+            eel.on_champ_select_update({
+                "myChampIds":    my_ids,
+                "enemyChampIds": enemy_ids,
+                "bans": [{"championId": c, "name": _get_champ_name(c)} for c in ban_ids],
+                "comp": comp,
+            })()
+    except Exception as e:
+        _log(f"CHAMPSEL_PUSH_ERR >> {e}")
 
     # ── 偵測自己選/預選的英雄，推播給前端自動載入 OP.GG 攻略 ──────────
     global _last_hovered_champ
@@ -2441,7 +2778,37 @@ async def _handle_champ_select(data: dict):
 
 
 # ── Launch ─────────────────────────────────────────────────────────────
+def _port_in_use(port: int) -> bool:
+    """偵測 port 是否已被占用（用於單一實例防護）。"""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(0.5)
+        return s.connect_ex(("127.0.0.1", port)) == 0
+
+
+def _wait_server_ready(port: int, timeout: float = 10.0) -> bool:
+    """輪詢直到 eel server 接受連線，或逾時。比固定 sleep 更可靠。"""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if _port_in_use(port):
+            return True
+        time.sleep(0.1)
+    return False
+
+
 if __name__ == "__main__":
+    # ── 單一實例防護 ───────────────────────────────────────────────────
+    # port 已被占用 → 已有一個實例在執行；直接結束，避免 eel server
+    # 在背景 thread 噴 WinError 10048，並防止開出指向舊實例的重複視窗。
+    if _port_in_use(_EEL_PORT):
+        _log("SYS >> 偵測到 LeagueMrfox 已在執行中，結束本次啟動")
+        try:
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(
+                0, "LeagueMrfox 已經在執行中。", "LeagueMrfox", 0x40)
+        except Exception:
+            pass
+        sys.exit(0)
+
     # 打包成 .exe 時 PyInstaller 解壓至 sys._MEIPASS；開發模式使用腳本所在目錄
     if getattr(sys, "frozen", False):
         web_dir = os.path.join(sys._MEIPASS, "web")
@@ -2449,23 +2816,29 @@ if __name__ == "__main__":
         web_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
     eel.init(web_dir)
 
-    import threading, time, webview
+    import webview
 
     # 背景執行緒：只啟動 eel 的 HTTP + WebSocket server，不開瀏覽器
     def _eel_server():
-        eel.start("index.html", mode=None, block=True, port=8000,
-                  close_callback=lambda p, s: None)
+        try:
+            eel.start("index.html", mode=None, block=True, port=_EEL_PORT,
+                      close_callback=lambda p, s: None)
+        except Exception as e:
+            _log(f"EEL_SERVER_ERR >> {e}")
 
     t = threading.Thread(target=_eel_server, daemon=True)
     t.start()
-    time.sleep(1.0)  # 等待 server 就緒
+
+    # 輪詢等待 server 就緒，而非固定 sleep（避免視窗先於 server 開啟）
+    if not _wait_server_ready(_EEL_PORT, timeout=10.0):
+        _log("SYS >> eel server 啟動逾時，仍嘗試開啟視窗")
 
     # 用 pywebview 開啟原生視窗（無邊框，自訂標題列）
     # URL 帶時間戳避免 WebView2 快取舊頁面
     _cache_bust = int(time.time())
     _webview_window = webview.create_window(
         "LeagueMrfox",
-        f"http://localhost:8000/index.html?v={_cache_bust}",
+        f"http://localhost:{_EEL_PORT}/index.html?v={_cache_bust}",
         width=1440,
         height=860,
         min_size=(900, 600),
@@ -2473,5 +2846,27 @@ if __name__ == "__main__":
         easy_drag=False,
         resizable=True,
     )
-    webview.start()
+
+    # 選角戰術常駐浮窗：always-on-top、初始隱藏，由 gameflow phase 控制顯示。
+    # 以 try/except 隔離，任何多視窗/置頂相容性問題都不影響主程式。
+    try:
+        _overlay_window = webview.create_window(
+            "LeagueMrfox 選角戰術",
+            f"http://localhost:{_EEL_PORT}/overlay.html?v={_cache_bust}",
+            width=360,
+            height=600,
+            frameless=True,
+            on_top=True,
+            resizable=False,
+            hidden=True,
+            x=40, y=40,
+        )
+    except Exception as e:
+        _overlay_window = None
+        _log(f"OVERLAY_CREATE_ERR >> {e}")
+
+    try:
+        webview.start()
+    except Exception as e:
+        _log(f"WEBVIEW_ERR >> {e}")
     sys.exit(0)

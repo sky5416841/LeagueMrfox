@@ -1356,3 +1356,68 @@ body, input, button, textarea {
 .live-rank-wr       { letter-spacing: .02em; }
 .live-rank-lp       { color: #475569; font-size: 9px; }
 .live-rank-unranked { color: #1e3a52; font-size: 9px; letter-spacing: .08em; }
+
+/* ══ 數據儀表板 Stats Dashboard ══════════════════════════════════════ */
+.stats-cards {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+.stats-card {
+  border: 1px solid rgba(6,182,212,0.22);
+  background: linear-gradient(160deg, rgba(8,47,73,0.25), #020617);
+  padding: 12px 14px;
+  text-align: center;
+}
+.stats-card-val { font-size: 22px; font-weight: 700; line-height: 1.1; letter-spacing: .02em; }
+.stats-card-lbl { font-size: 9px; color: #475569; letter-spacing: .18em; margin-top: 4px; }
+
+.stats-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+.stats-panel {
+  border: 1px solid rgba(6,182,212,0.18);
+  background: #020617;
+  padding: 10px 12px;
+  box-shadow: 0 0 12px rgba(6,182,212,0.04);
+}
+.stats-panel-hdr {
+  font-size: 10px; letter-spacing: .14em; color: #0e7490;
+  margin-bottom: 8px; display: flex; align-items: baseline; gap: 6px;
+}
+.stats-panel-sub { font-size: 8px; color: #334155; letter-spacing: .06em; font-weight: normal; }
+
+.stats-spark { width: 100%; height: 44px; display: block; }
+.stats-axis {
+  display: flex; justify-content: space-between;
+  font-size: 8px; color: #334155; margin-top: 2px; letter-spacing: .05em;
+}
+
+.stats-form-row { display: flex; gap: 4px; flex-wrap: wrap; }
+.stats-form-box {
+  width: 22px; height: 22px; border-radius: 3px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10px; font-weight: 700; color: #020617;
+  cursor: default; transition: transform .15s;
+}
+.stats-form-box:hover { transform: scale(1.18); z-index: 2; }
+
+.stats-bar-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.stats-bar-key { width: 16px; font-size: 12px; font-weight: 700; text-align: center; flex-shrink: 0; }
+.stats-bar-key-wide { width: 56px; font-size: 10px; color: #94a3b8; text-align: left; letter-spacing: .04em; }
+.stats-bar-track {
+  flex: 1; height: 14px; background: rgba(30,41,59,0.5);
+  border: 1px solid rgba(51,65,85,0.4); overflow: hidden;
+}
+.stats-bar-fill { height: 100%; transition: width .5s ease; }
+.stats-bar-num { font-size: 10px; color: #64748b; min-width: 64px; text-align: right; font-variant-numeric: tabular-nums; }
+
+.stats-champ-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 4px; border-bottom: 1px solid rgba(30,41,59,0.35);
+}
+.stats-champ-row:last-child { border-bottom: none; }
+.stats-champ-icon {
+  width: 30px; height: 30px; flex-shrink: 0; overflow: hidden; border-radius: 4px;
+  border: 1px solid rgba(6,182,212,0.25); background: #0f172a;
+}
+.stats-champ-icon img { width: 100%; height: 100%; }

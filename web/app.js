@@ -45,6 +45,7 @@ function switchTab(tab) {
   document.getElementById(`tab-${tab}`).classList.remove('hidden');
   document.getElementById(`nav-${tab}`).classList.add('active');
   if (tab === 'analytics') loadAnalytics();
+  if (tab === 'stats') loadDashboard();
   if (tab === 'opgg') initOpggPicker();
 }
 
@@ -153,6 +154,11 @@ function on_lobby_scan_ready(players) {
   _renderLiveInto();
   switchTab('live');
 }
+
+// 選角戰術推播：主視窗不需處理（由常駐浮窗 overlay.js 呈現），
+// 但 eel 會廣播給所有連線視窗，故主視窗保留一個 no-op handler 避免找不到函式。
+eel.expose(on_champ_select_update);
+function on_champ_select_update(_state) { /* 由 overlay 視窗負責呈現 */ }
 
 eel.expose(on_champ_select_ended);
 function on_champ_select_ended(phase) {
@@ -696,6 +702,163 @@ function toggleAutoBan() {
   }
 
   eel.set_auto_ban(autoBanEnabled, autoBanChampId);
+}
+
+// ── 數據儀表板 ──────────────────────────────────────────────────────────
+let _dashboardLoading = false;
+
+async function loadDashboard() {
+  const body   = document.getElementById('stats-body');
+  const status = document.getElementById('stats-status');
+  if (!body || _dashboardLoading) return;
+  _dashboardLoading = true;
+
+  const count = parseInt(document.getElementById('stats-count')?.value || '50');
+  body.innerHTML = '<div class="text-[10px] text-slate-700 tracking-widest px-2 py-10 text-center">— 聚合戰績中... —</div>';
+  if (status) status.textContent = `載入近 ${count} 場...`;
+
+  try {
+    const d = await eel.get_match_dashboard(count)();
+    if (!d || !d.summary || !d.summary.games) {
+      body.innerHTML = '<div class="text-[10px] text-slate-700 tracking-widest px-2 py-10 text-center">— 暫無戰績資料 —</div>';
+      if (status) status.textContent = '';
+      return;
+    }
+    renderDashboard(d);
+    if (status) status.textContent = `近 ${d.summary.games} 場`;
+  } catch (e) {
+    body.innerHTML = `<div class="text-[10px] text-red-400 px-2 py-10 text-center">載入失敗：${e}</div>`;
+  } finally {
+    _dashboardLoading = false;
+  }
+}
+
+function _wrColor(wr) {
+  return wr >= 60 ? '#4ade80' : wr >= 50 ? '#a3e635' : wr >= 40 ? '#fb923c' : '#f87171';
+}
+
+// 折線圖（SVG）：pts 為 [{i, <key>}]，val 取 0~max
+function _sparkline(pts, key, max, color, baseline) {
+  if (!pts || pts.length < 2) return '<div class="text-[10px] text-slate-700 px-2">資料不足</div>';
+  const W = 100, H = 36, pad = 2;
+  const n = pts.length;
+  const xs = i => pad + (W - 2 * pad) * i / (n - 1);
+  const ys = v => H - pad - (H - 2 * pad) * Math.min(v, max) / max;
+  const line = pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${xs(i).toFixed(1)},${ys(p[key]).toFixed(1)}`).join(' ');
+  const area = `${line} L${xs(n - 1).toFixed(1)},${H - pad} L${xs(0).toFixed(1)},${H - pad} Z`;
+  const baseY = (baseline != null) ? ys(baseline).toFixed(1) : null;
+  const gid = 'g' + Math.random().toString(36).slice(2, 7);
+  return `
+    <svg class="stats-spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+      <defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="${color}" stop-opacity="0.35"/>
+        <stop offset="100%" stop-color="${color}" stop-opacity="0"/>
+      </linearGradient></defs>
+      ${baseY ? `<line x1="0" y1="${baseY}" x2="${W}" y2="${baseY}" stroke="#334155" stroke-width="0.4" stroke-dasharray="2,2"/>` : ''}
+      <path d="${area}" fill="url(#${gid})"/>
+      <path d="${line}" fill="none" stroke="${color}" stroke-width="1.2" vector-effect="non-scaling-stroke"/>
+    </svg>`;
+}
+
+function renderDashboard(d) {
+  const s = d.summary;
+  const wrC = _wrColor(s.winRate);
+
+  // ── 1. 總覽數字卡 ──
+  const cards = `
+    <div class="stats-cards">
+      <div class="stats-card"><div class="stats-card-val" style="color:${wrC}">${s.winRate}%</div><div class="stats-card-lbl">勝率</div></div>
+      <div class="stats-card"><div class="stats-card-val text-slate-200">${s.wins}<span class="text-slate-600 text-sm">W</span> ${s.losses}<span class="text-slate-600 text-sm">L</span></div><div class="stats-card-lbl">${s.games} 場戰績</div></div>
+      <div class="stats-card"><div class="stats-card-val text-cyan-300">${s.kda}</div><div class="stats-card-lbl">平均 KDA</div></div>
+      <div class="stats-card"><div class="stats-card-val text-amber-300">${(s.avgDamage/1000).toFixed(1)}K</div><div class="stats-card-lbl">場均傷害</div></div>
+    </div>`;
+
+  // ── 2. 勝率走勢 + KDA 趨勢 ──
+  const maxKda = Math.max(5, ...d.kdaTrend.map(p => p.kda));
+  const charts = `
+    <div class="stats-grid2">
+      <div class="stats-panel">
+        <div class="stats-panel-hdr">勝率走勢 <span class="stats-panel-sub">累積 · 由舊到新</span></div>
+        ${_sparkline(d.winTrend, 'winRate', 100, '#22d3ee', 50)}
+        <div class="stats-axis"><span>0%</span><span>50%</span><span>100%</span></div>
+      </div>
+      <div class="stats-panel">
+        <div class="stats-panel-hdr">KDA 趨勢 <span class="stats-panel-sub">逐場 · 由舊到新</span></div>
+        ${_sparkline(d.kdaTrend, 'kda', maxKda, '#a78bfa', null)}
+        <div class="stats-axis"><span>0</span><span>${maxKda.toFixed(0)}</span></div>
+      </div>
+    </div>`;
+
+  // ── 3. 近期手感（最新在前）──
+  const formBoxes = d.recentForm.map(g => {
+    const c = g.win ? '#22c55e' : '#ef4444';
+    const t = `${g.championName} · ${g.win ? '勝' : '負'} · KDA ${g.kda}${g.grade ? ' · ' + g.grade : ''}`;
+    return `<div class="stats-form-box" style="background:${c}" title="${t}">${g.win ? 'W' : 'L'}</div>`;
+  }).join('');
+  const form = `
+    <div class="stats-panel">
+      <div class="stats-panel-hdr">近期手感 <span class="stats-panel-sub">最新 ${d.recentForm.length} 場 · 左為最新</span></div>
+      <div class="stats-form-row">${formBoxes || '<span class="text-[10px] text-slate-700">無資料</span>'}</div>
+    </div>`;
+
+  // ── 4. 評級分布 ──
+  const maxGrade = Math.max(1, ...d.gradeDist.map(g => g.count));
+  const gradeColor = { S: '#fbbf24', A: '#a3e635', B: '#22d3ee', C: '#fb923c', D: '#f87171' };
+  const gradeBars = d.gradeDist.map(g => `
+    <div class="stats-bar-row">
+      <div class="stats-bar-key" style="color:${gradeColor[g.grade]}">${g.grade}</div>
+      <div class="stats-bar-track"><div class="stats-bar-fill" style="width:${g.count / maxGrade * 100}%;background:${gradeColor[g.grade]}"></div></div>
+      <div class="stats-bar-num">${g.count}</div>
+    </div>`).join('');
+
+  // ── 5. 佇列分布 ──
+  const maxQ = Math.max(1, ...d.queueDist.map(q => q.games));
+  const queueBars = d.queueDist.map(q => {
+    const c = _wrColor(q.winRate);
+    return `
+      <div class="stats-bar-row">
+        <div class="stats-bar-key stats-bar-key-wide">${q.queue}</div>
+        <div class="stats-bar-track"><div class="stats-bar-fill" style="width:${q.games / maxQ * 100}%;background:#475569"></div></div>
+        <div class="stats-bar-num">${q.games}場 <span style="color:${c}">${q.winRate}%</span></div>
+      </div>`;
+  }).join('');
+  const dist = `
+    <div class="stats-grid2">
+      <div class="stats-panel">
+        <div class="stats-panel-hdr">該場評級分布 <span class="stats-panel-sub">S / A / B / C / D</span></div>
+        ${gradeBars}
+      </div>
+      <div class="stats-panel">
+        <div class="stats-panel-hdr">佇列分布 <span class="stats-panel-sub">場次 · 勝率</span></div>
+        ${queueBars}
+      </div>
+    </div>`;
+
+  // ── 6. 最佳 / 最差英雄 ──
+  function champRow(c) {
+    const cc = _wrColor(c.winRate);
+    return `
+      <div class="stats-champ-row">
+        <div class="stats-champ-icon"><img class="w-full h-full object-cover rounded" src="${IMG_PH}" ${IMG_ERR} data-champid="${c.championId}" alt="${c.name}"></div>
+        <div class="flex-1 min-w-0"><div class="text-[11px] text-slate-300 truncate">${c.name}</div><div class="text-[9px] text-slate-600">${c.games} 場 · KDA ${c.kda}</div></div>
+        <div class="text-sm font-bold shrink-0" style="color:${cc}">${c.winRate}%</div>
+      </div>`;
+  }
+  const champs = `
+    <div class="stats-grid2">
+      <div class="stats-panel">
+        <div class="stats-panel-hdr text-emerald-400/80">🏆 最佳英雄 <span class="stats-panel-sub">≥2 場</span></div>
+        ${d.bestChamps.length ? d.bestChamps.map(champRow).join('') : '<div class="text-[10px] text-slate-700 px-1 py-2">資料不足</div>'}
+      </div>
+      <div class="stats-panel">
+        <div class="stats-panel-hdr text-rose-400/80">⚠️ 最差英雄 <span class="stats-panel-sub">≥2 場</span></div>
+        ${d.worstChamps.length ? d.worstChamps.map(champRow).join('') : '<div class="text-[10px] text-slate-700 px-1 py-2">資料不足</div>'}
+      </div>
+    </div>`;
+
+  const body = document.getElementById('stats-body');
+  body.innerHTML = cards + charts + form + dist + champs;
+  body.querySelectorAll('[data-champid]').forEach(img => _loadChampIcon(parseInt(img.dataset.champid), img));
 }
 
 // ── 英雄分析 ────────────────────────────────────────────────────────────
@@ -1427,7 +1590,7 @@ async function doReconnect() {
 
 // ── 初始化 ─────────────────────────────────────────────────────────────
 window.addEventListener('load', async () => {
-  append_log('SYS >> LeagueMrfox V1.4 初始化完成');
+  append_log('SYS >> LeagueMrfox V1.5 初始化完成');
 
   // 自訂標題列按鈕
   const tbMin = document.getElementById('tb-min');

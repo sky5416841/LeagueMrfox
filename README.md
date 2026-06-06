@@ -11,7 +11,7 @@
   <img src="https://img.shields.io/github/v/release/sky5416841/LeagueMrfox?style=flat-square&color=blue">
   <img src="https://img.shields.io/badge/platform-Windows-informational?style=flat-square">
   <img src="https://img.shields.io/badge/python-3.11-green?style=flat-square">
-  <img src="https://img.shields.io/badge/version-1.2-cyan?style=flat-square">
+  <img src="https://img.shields.io/badge/version-1.5-cyan?style=flat-square">
 </p>
 
 ---
@@ -29,7 +29,13 @@
 | **連勝 / 連敗** | 🔥 連勝 / ❄️ 連敗徽章，一眼看出對手手感 |
 | **近期趨勢** | 近 5 場 W/L 走勢方塊，滑鼠移上顯示單場 KDA |
 | **開黑偵測** | 以 `teamParticipantId` 標記敵我雙方組隊玩家（同組同色） |
+| **數據儀表板** 🆕 | 視覺化個人戰報：勝率累積走勢、KDA 趨勢、S/A/B/C/D 評級分布、佇列勝率、最佳 / 最差英雄 |
+| **選角戰術中樞** 🆕 | 即時解析雙方陣容：物理 / 魔法傷害比例、前排 / 開團數、職業分布，並提示缺口（缺前排 / 全物理…） |
+| **常駐戰術浮窗** 🆕 | 選角階段自動彈出 always-on-top 小浮窗，全螢幕客戶端上也看得到戰術分析與 meta 建議禁用 |
+| **OP.GG 攻略** | 整合 OP.GG 符文 / 出裝 / 召喚師技能 / 技能加點，選角時依英雄自動帶出 |
 | **日誌 Console** | 獨立全螢幕分頁顯示系統日誌，支援文字選取複製 |
+
+> 🆕 = V1.5 新增。本版另含穩定性強化：單一實例防護（防止重複啟動崩潰）、debug log 自動輪替、伺服器就緒輪詢、啟動全程容錯。
 
 ---
 

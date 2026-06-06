@@ -16,6 +16,7 @@ data/*.json
 
 # 截圖與本地 debug log
 debug.log
+debug.log.1
 run_log.txt
 
 # 本地除錯腳本

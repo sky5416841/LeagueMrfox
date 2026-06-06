@@ -9,7 +9,7 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=34">
+  <link rel="stylesheet" href="style.css?v=35">
 </head>
 <body class="bg-[#020617] h-screen overflow-hidden select-none flex flex-col">
 
@@ -20,7 +20,7 @@
   <div class="titlebar-left">
     <img src="avatar.png?v=2" class="titlebar-icon" alt="">
     <span class="titlebar-title">LeagueMrfox</span>
-    <span class="titlebar-ver">v1.4</span>
+    <span class="titlebar-ver">v1.5</span>
   </div>
   <div class="titlebar-controls">
     <button class="titlebar-btn" id="tb-min" title="最小化">&#x2013;</button>
@@ -40,7 +40,7 @@
       <span class="text-cyan-400 text-xs">▶▶</span>
       <div>
         <div class="text-cyan-300 text-sm tracking-[0.2em] glow-cyan">[ LeagueMrfox ]</div>
-        <div class="text-[9px] text-slate-600 tracking-widest mt-0.5">V1.4 // CYBERPUNK EDITION</div>
+        <div class="text-[9px] text-slate-600 tracking-widest mt-0.5">V1.5 // CYBERPUNK EDITION</div>
       </div>
     </div>
 
@@ -64,6 +64,12 @@
         <span class="nav-icon">◉</span>
         <span class="nav-label">英雄戰報分析</span>
         <span class="nav-tag">Analytics</span>
+      </button>
+
+      <button id="nav-stats" class="nav-item" onclick="switchTab('stats')">
+        <span class="nav-icon">📊</span>
+        <span class="nav-label">數據儀表板</span>
+        <span class="nav-tag">Stats</span>
       </button>
 
       <button id="nav-live" class="nav-item" onclick="switchTab('live')">
@@ -373,6 +379,26 @@
 
     </section>
 
+    <!-- ══ 數據儀表板 Stats Tab ══ -->
+    <section id="tab-stats" class="tab-section flex-1 min-h-0 flex-col gap-3 hidden">
+      <div class="panel shrink-0">
+        <div class="panel-header flex items-center justify-between">
+          <span>// 數據儀表板 <span id="stats-status" class="text-[9px] text-slate-700 ml-2"></span></span>
+          <div class="flex items-center gap-2">
+            <select id="stats-count" class="opgg-select" onchange="loadDashboard()">
+              <option value="30">近 30 場</option>
+              <option value="50" selected>近 50 場</option>
+              <option value="100">近 100 場</option>
+            </select>
+            <button onclick="loadDashboard()" class="text-[9px] text-slate-700 hover:text-cyan-600 transition-colors font-normal">[ 重新整理 ]</button>
+          </div>
+        </div>
+      </div>
+      <div id="stats-body" class="flex-1 min-h-0 overflow-y-auto custom-scroll pr-1 flex flex-col gap-3">
+        <div class="text-[10px] text-slate-700 tracking-widest px-2 py-10 text-center">— 切換至此分頁自動載入 —</div>
+      </div>
+    </section>
+
     <!-- ══ 即時戰情 Live Tab ══ -->
     <section id="tab-live" class="tab-section flex-1 min-h-0 flex-col gap-3 hidden">
 
@@ -499,6 +525,6 @@
   </div>
 </div>
 
-<script src="app.js?v=37"></script>
+<script src="app.js?v=39"></script>
 </body>
 </html>
