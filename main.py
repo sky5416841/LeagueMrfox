@@ -146,8 +146,8 @@ def _log(msg: str):
 
 
 def _sgp_get_summoner_names(puuids: list[str]) -> dict[str, str]:
-    """用 SGP summoner-ledge API 批次查詢玩家名稱，可繞過 LCU 匿名限制。
-    回傳 {puuid: gameName} dict，失敗回傳空 dict。
+    """[已廢棄] SGP summoner-ledge API 自 2026/6 起 unnamed=True，名稱欄位全空。
+    保留函式供日後觀察，實際補名改由 summonerAPI fallback 處理。
     """
     pid = (_platform_id or "").upper()
     common_base = _SGP_COMMON_URLS.get(pid)
@@ -171,12 +171,19 @@ def _sgp_get_summoner_names(puuids: list[str]) -> dict[str, str]:
             timeout=5,
         )
         resp.raise_for_status()
+        raw_list = resp.json()
+        # 記錄第一筆的欄位，方便追查格式變化
+        if raw_list:
+            s0 = raw_list[0]
+            _log(f"SGP_SUMMONER >> 回傳欄位範例: name={s0.get('name')!r} "
+                 f"internalName={s0.get('internalName')!r} "
+                 f"unnamed={s0.get('unnamed')!r} privacy={s0.get('privacy')!r}")
         result = {}
-        for s in resp.json():
+        for s in raw_list:
             pu   = s.get("puuid", "")
-            # SgpSummoner 的名稱欄位是 "name"（非 gameName/displayName）
-            name = (s.get("name") or s.get("gameName") or
-                    s.get("displayName") or "").strip()
+            # SgpSummoner 的名稱欄位；internalName 是帳號原始名稱（非 Riot ID）
+            name = (s.get("name") or s.get("internalName") or
+                    s.get("gameName") or s.get("displayName") or "").strip()
             if pu and name:
                 result[pu] = name
         _log(f"SGP_SUMMONER >> {len(result)}/{len(puuids)} 筆名稱查回")
@@ -1150,13 +1157,8 @@ def _scan_ingame_sync():
                     _gf_name_cache[pu] = real
             _log(f"INGAME_SCAN >> 名稱快取 {len(_gf_name_cache)}/{len(t1_raw)+len(t2_raw)} 筆")
 
-            # 沒有名稱的玩家用 SGP summoner-ledge 批次補齊
-            missing = [p["puuid"] for p in t1_raw + t2_raw
-                       if p.get("puuid") and p["puuid"] != _EMPTY_PUUID
-                       and p["puuid"] not in _gf_name_cache]
-            if missing:
-                sgp_names = _sgp_get_summoner_names(missing)
-                _gf_name_cache.update(sgp_names)
+            # SGP summoner-ledge 已於 2026/6 被 Riot 端遮蔽（unnamed=True），
+            # 名稱補齊改由各 _fetch_player 內的 summonerAPI fallback 處理
         except Exception as e:
             _log(f"INGAME_SCAN >> [gameflow] 失敗: {e}")
 
