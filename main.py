@@ -1961,7 +1961,7 @@ def get_kiwi_balance(champ_id: int) -> dict:
         return {}
     _load_kiwi_balance()
     entry = _kiwi_balance_cache.get(str(champ_id)) or {}
-    if not entry or entry.get("default", True):
+    if not entry or entry.get("default", False):
         return {}
     # 只回傳非預設值（值 != 100 且 != 0 的欄位）
     result = {}
