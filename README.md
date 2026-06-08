@@ -10,8 +10,8 @@
   <img src="https://img.shields.io/github/downloads/sky5416841/LeagueMrfox/total?style=flat-square&color=cyan">
   <img src="https://img.shields.io/github/v/release/sky5416841/LeagueMrfox?style=flat-square&color=blue">
   <img src="https://img.shields.io/badge/platform-Windows-informational?style=flat-square">
-  <img src="https://img.shields.io/badge/python-3.11-green?style=flat-square">
-  <img src="https://img.shields.io/badge/version-1.5-cyan?style=flat-square">
+  <img src="https://img.shields.io/badge/python-3.13-green?style=flat-square">
+  <img src="https://img.shields.io/badge/version-1.6-cyan?style=flat-square">
 </p>
 
 ---
@@ -33,9 +33,19 @@
 | **選角戰術中樞** 🆕 | 即時解析雙方陣容：物理 / 魔法傷害比例、前排 / 開團數、職業分布，並提示缺口（缺前排 / 全物理…） |
 | **常駐戰術浮窗** 🆕 | 選角階段自動彈出 always-on-top 小浮窗，全螢幕客戶端上也看得到戰術分析與 meta 建議禁用 |
 | **OP.GG 攻略** | 整合 OP.GG 符文 / 出裝 / 召喚師技能 / 技能加點，選角時依英雄自動帶出 |
+| **大混戰 (Kiwi)** 🆕 | 完整支援大混戰模式：增幅排行 TOP30（S→E tier 排序）、平衡調整數值整合、自動偵測模式 |
 | **日誌 Console** | 獨立全螢幕分頁顯示系統日誌，支援文字選取複製 |
 
-> 🆕 = V1.5 新增。本版另含穩定性強化：單一實例防護（防止重複啟動崩潰）、debug log 自動輪替、伺服器就緒輪詢、啟動全程容錯。
+> 🆕 = V1.6 新增。本版重點為大混戰 (Kiwi) 模式完整支援；另含模式偵測修正與匿名玩家補名強化。
+
+### 支援模式
+
+| 模式 | 戰績掃描 | 攻略整合 |
+|------|:--------:|:--------:|
+| 一般對戰 / 積分對戰（召喚峽谷） | ✅ | ✅ 符文 / 出裝 / 加點 |
+| 大亂鬥（ARAM） | ✅ | ✅ |
+| 鬥魂競技（Arena） | ✅ | ✅ |
+| 大混戰（Kiwi） | ✅ | ✅ 增幅排行 + 平衡調整 |
 
 ---
 
@@ -52,7 +62,7 @@ pip install eel requests psutil websockets urllib3 pywebview
 python main.py
 ```
 
-> 需要 Python 3.11，執行前請確認英雄聯盟客戶端正在運行。
+> 需要 Python 3.13，執行前請確認英雄聯盟客戶端正在運行。
 
 ---
 
@@ -79,7 +89,7 @@ build.bat
 
 ## 5. 技術架構
 
-- **後端**：Python 3.11 + [Eel](https://github.com/python-eel/Eel)
+- **後端**：Python 3.13 + [Eel](https://github.com/python-eel/Eel)
 - **前端**：Vanilla JS + Tailwind CSS
 - **視窗**：[pywebview](https://pywebview.flowrl.com/)（Windows WebView2，無邊框原生視窗 + 自訂標題列）
 - **通訊**：LCU API（本機 HTTPS + WebSocket 事件監聽）
