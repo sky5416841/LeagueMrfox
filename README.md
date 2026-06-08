@@ -96,10 +96,13 @@ build.bat
 ## 7. 程式展示
 
 <p align="center">
-  <img src="https://github.com/sky5416841/LeagueMrfox/releases/download/v1.2/screenshot1.png" width="800" alt="截圖一">
+  <img src="scshot/1.png" width="800" alt="截圖一">
 </p>
 <p align="center">
-  <img src="https://github.com/sky5416841/LeagueMrfox/releases/download/v1.2/screenshot2.png" width="800" alt="截圖二">
+  <img src="scshot/2.jpg" width="800" alt="截圖二">
+</p>
+<p align="center">
+  <img src="scshot/3.png" width="800" alt="截圖三">
 </p>
 
 ---
