@@ -396,6 +396,14 @@ async function saveTag() {
 
 // ── OP.GG 英雄攻略 ─────────────────────────────────────────────────────
 const _POS_OPGG = { top:'top', jungle:'jungle', middle:'mid', bottom:'adc', utility:'support' };
+// 大廳模式變更推播（Lobby/Matchmaking 時即偵測）
+eel.expose(on_lobby_mode_change);
+function on_lobby_mode_change(mode) {
+  const modeSel = document.getElementById('opgg-mode');
+  if (modeSel && mode) modeSel.value = mode;
+  append_log(`LOBBY_MODE >> 攻略模式切換為 ${mode}`, true);
+}
+
 eel.expose(on_my_champion_select);
 function on_my_champion_select(champId, mode, position) {
   // 立即返回讓後端解除阻塞，延後到下一個 tick 才呼叫後端拿資料（避免 eel 雙向死鎖）
@@ -438,6 +446,10 @@ async function loadOpgg(champIdArg, modeArg, posArg) {
   if (!champId) return;
   body.innerHTML = '<div class="text-[10px] text-slate-700 tracking-widest">// 查詢中...</div>';
   try {
+    if (mode === 'kiwi') {
+      await _renderOpggKiwi(body, champId);
+      return;
+    }
     const d = await eel.opgg_get_champion(champId, mode, pos)();
     if (!d || !d.summary) {
       body.innerHTML = '<div class="text-[10px] text-slate-600">查無資料（該模式/位置可能無數據）</div>';
@@ -456,7 +468,213 @@ function _opggWinRate(o) {
 const _TIER_LABEL = { 1:'T1', 2:'T2', 3:'T3', 4:'T4', 5:'T5' };
 const _SKILL_COLOR = { Q:'#60a5fa', W:'#4ade80', E:'#fbbf24', R:'#f87171' };
 
+// ── 競技場模式渲染 ──────────────────────────────────────────────────────
+const _ARENA_RARITY = { 1: { label: '銀色', cls: 'aug-silver' }, 4: { label: '金色', cls: 'aug-gold' }, 8: { label: '稜彩', cls: 'aug-prismatic' } };
+
+async function _renderOpggArena(body, d, champId) {
+  const avg = (d.summary && d.summary.average_stats) || {};
+  const t = avg.tier ? (_TIER_LABEL[avg.tier] || `T${avg.tier}`) : '';
+  const wr = avg.play ? (avg.win / avg.play * 100).toFixed(1) : '—';
+  const fp = avg.play ? (avg.first_place / avg.play * 100).toFixed(1) : '—';
+
+  const summaryHtml = t ? `<div class="opgg-summary">
+    <span class="opgg-tier opgg-tier-${avg.tier}">${t}</span>
+    <span class="opgg-stat">勝率 <b>${wr}%</b></span>
+    <span class="opgg-stat">第一 <b>${fp}%</b></span>
+    ${avg.pick_rate != null ? `<span class="opgg-stat">登場 <b>${(avg.pick_rate*100).toFixed(1)}%</b></span>` : ''}
+  </div>` : '';
+
+  // 平衡性調整（從後端拿）
+  let balanceHtml = '';
+  try {
+    const bal = await eel.get_arena_balance(champId)();
+    if (bal && (bal.dmg_dealt != null || bal.dmg_taken != null)) {
+      const fmtPct = v => v >= 0 ? `<span style="color:#4ade80">+${v}%</span>` : `<span style="color:#f87171">${v}%</span>`;
+      balanceHtml = `<div class="opgg-block opgg-arena-balance">
+        <div class="opgg-block-hdr">平衡性調整</div>
+        <div class="opgg-arena-bal-row">
+          <span>造成傷害</span>${fmtPct(bal.dmg_dealt ?? 0)}
+          <span style="margin-left:12px">承受傷害</span>${fmtPct(bal.dmg_taken ?? 0)}
+        </div>
+      </div>`;
+    }
+  } catch(_) {}
+
+  // 增幅列表（依稀有度分組，列表格式含名稱）
+  const groups = d.augment_group || [];
+  // 批次取所有增幅 ID 的名稱
+  const allAugIds = groups.flatMap(g => g.augments.map(a => a.id));
+  let augNames = {};
+  try { augNames = await eel.get_augment_names(allAugIds)() || {}; } catch(_) {}
+
+  let augHtml = '';
+  for (const g of groups) {
+    const meta = _ARENA_RARITY[g.rarity] || { label: `R${g.rarity}`, cls: 'aug-silver' };
+    const sorted = [...g.augments].sort((a, b) => (b.win/Math.max(b.play,1)) - (a.win/Math.max(a.play,1))).slice(0, 8);
+    const rows = sorted.map((a, i) => {
+      const wr = (a.win / Math.max(a.play, 1) * 100).toFixed(1);
+      const fp = (a.first_place / Math.max(a.play, 1) * 100).toFixed(1);
+      const name = augNames[String(a.id)] || `#${a.id}`;
+      return `<div class="aug-list-row">
+        <span class="aug-rank">#${i+1}</span>
+        <img class="aug-img-sm ${meta.cls}" data-augid="${a.id}" src="${IMG_PH}" ${IMG_ERR}>
+        <span class="aug-name">${name}</span>
+        <span class="aug-wr">${wr}%</span>
+        <span class="aug-fp">一血 ${fp}%</span>
+      </div>`;
+    }).join('');
+    augHtml += `<div class="opgg-block">
+      <div class="opgg-block-hdr aug-hdr-${meta.cls}">${meta.label}增幅</div>
+      <div class="aug-list">${rows}</div>
+    </div>`;
+  }
+
+  // 技能加點
+  const mastery = (d.skill_masteries || [])[0];
+  const skill   = (d.skills || [])[0];
+  const masteryHtml = mastery ? `<div class="opgg-skill-pri">
+    ${(mastery.ids||[]).map((s,i) => `<span class="opgg-skill-key" style="border-color:${_SKILL_COLOR[s]};color:${_SKILL_COLOR[s]}">${s}</span>${i<mastery.ids.length-1?'<span class="opgg-arrow">›</span>':''}`).join('')}
+  </div>` : '';
+  const orderHtml = skill ? `<div class="opgg-skill-order">
+    ${(skill.order||[]).map(s => `<span class="opgg-skill-cell" style="color:${_SKILL_COLOR[s]}">${s}</span>`).join('')}
+  </div>` : '';
+
+  // 出裝
+  const core    = (d.core_items || [])[0];
+  const boots   = (d.boots || [])[0];
+  const starter = (d.starter_items || [])[0];
+  const iconRow = (cls, ids) => (ids || []).map(id => `<img class="${cls}" src="${IMG_PH}" data-id="${id}" ${IMG_ERR}>`).join('');
+
+  body.innerHTML = `${summaryHtml}<div class="opgg-grid">
+    ${balanceHtml}
+    ${augHtml}
+    ${(masteryHtml||orderHtml) ? `<div class="opgg-block"><div class="opgg-block-hdr">技能加點${mastery?` <span class="opgg-wr">${_opggWinRate(mastery)}% 勝</span>`:''}</div>${masteryHtml}${orderHtml}</div>` : ''}
+    ${starter ? `<div class="opgg-block"><div class="opgg-block-hdr">起手裝</div><div class="opgg-icons">${iconRow('opgg-item', starter.ids)}</div></div>` : ''}
+    ${core    ? `<div class="opgg-block"><div class="opgg-block-hdr">核心裝</div><div class="opgg-icons">${iconRow('opgg-item', core.ids)}</div></div>` : ''}
+    ${boots   ? `<div class="opgg-block"><div class="opgg-block-hdr">鞋子</div><div class="opgg-icons">${iconRow('opgg-item', boots.ids)}</div></div>` : ''}
+  </div>`;
+
+  body.querySelectorAll('.opgg-item').forEach(async img => { img.src = await eel.get_item_image_base64_by_id(parseInt(img.dataset.id))() || IMG_PH; });
+  body.querySelectorAll('.aug-img-sm').forEach(async img => { img.src = await eel.get_augment_image_base64_by_id(parseInt(img.dataset.augid))() || IMG_PH; });
+}
+
+// ── 大混戰模式渲染 ────────────────────────────────────────────────────────
+const _KIWI_RARITY = {
+  kSilver:   { cls: 'aug-silver',   short: 'S' },
+  kGold:     { cls: 'aug-gold',     short: 'G' },
+  kPrismatic:{ cls: 'aug-prismatic',short: 'P' },
+};
+const _KIWI_TIER = {0:'S',1:'A',2:'B',3:'C',4:'D',5:'E',6:'F'};
+
+async function _renderOpggKiwi(body, champId) {
+  body.innerHTML = '<div class="text-[10px] text-slate-700 tracking-widest">// 載入大混戰增幅...</div>';
+  try {
+    const [champAugs, kiwiAll, bal] = await Promise.all([
+      eel.get_kiwi_champion_augments(champId)(),
+      eel.get_kiwi_augments()(),
+      eel.get_kiwi_balance(champId)(),
+    ]);
+
+    // gtimg 查找表 {augmentID -> {level, name_cn}}
+    const kiwiMeta = {};
+    for (const a of (kiwiAll || [])) kiwiMeta[a.augmentID] = a;
+
+    // 批次取 LCU 繁體名稱
+    const allIds = (champAugs || []).map(a => a.id);
+    let lcuNames = {};
+    try { lcuNames = await eel.get_augment_names(allIds)() || {}; } catch(_) {}
+
+    // 平衡調整
+    const _BAL_LABEL = {
+      damage_dealt:'造成傷害', damage_taken:'承受傷害',
+      healing:'治癒效果', shield_amount:'護盾值',
+      energy_regen:'能量回覆', tenacity:'韌性',
+      cooldown_reduction:'冷卻縮減', attack_speed:'攻速',
+      area_of_effect_damage:'範圍傷害',
+    };
+    let balanceHtml = '';
+    if (bal && Object.keys(bal).length) {
+      const fmtPct = v => v >= 0
+        ? `<span style="color:#4ade80">+${v}%</span>`
+        : `<span style="color:#f87171">${v}%</span>`;
+      const items = Object.entries(bal)
+        .map(([k,v]) => `<span class="opgg-stat"><span style="color:#94a3b8">${_BAL_LABEL[k]||k}</span> ${fmtPct(v)}</span>`)
+        .join('');
+      balanceHtml = `<div class="opgg-block opgg-arena-balance">
+        <div class="opgg-block-hdr">平衡性調整</div>
+        <div class="opgg-arena-bal-row" style="flex-wrap:wrap;gap:4px 12px">${items}</div>
+      </div>`;
+    }
+
+    // 扁平排行：只保留 gtimg 裡有的（當前版本）且有名字的增幅
+    // 排序：先按 tier（S=0 最好 … E=5 最差），同 tier 再按 performance 降序
+    const _TIER_ORDER = {S:0,A:1,B:2,C:3,D:4,E:5,F:6};
+    const rows = [];
+    for (const aug of (champAugs || [])) {
+      const meta = kiwiMeta[aug.id];
+      if (!meta) continue;
+
+      const lcuName = lcuNames[String(aug.id)];
+      const isPlaceholder = !lcuName || /^[?？\s]+$/.test(lcuName);
+      const name = isPlaceholder ? null : lcuName;
+      if (!name) continue;
+
+      const rarity = _KIWI_RARITY[meta.level] || _KIWI_RARITY.kSilver;
+      const tier   = _KIWI_TIER[aug.tier] ?? 'E';
+      rows.push({ aug, name, rarity, tier });
+    }
+    rows.sort((a, b) => {
+      const td = (_TIER_ORDER[a.tier] ?? 9) - (_TIER_ORDER[b.tier] ?? 9);
+      if (td !== 0) return td;
+      return (b.aug.performance ?? 0) - (a.aug.performance ?? 0);
+    });
+
+    const _TIER_COLOR = {
+      S:'#a855f7', A:'#3b82f6', B:'#22d3ee', C:'#4ade80', D:'#facc15', E:'#94a3b8', F:'#64748b'
+    };
+    const top = rows.slice(0, 30);
+    // 兩欄：奇數行在左，偶數行在右
+    const left  = top.filter((_,i) => i%2===0);
+    const right = top.filter((_,i) => i%2===1);
+    const cell = (r, i) => {
+      const clr = _TIER_COLOR[r.tier] || '#94a3b8';
+      return `<div class="aug-list-row" style="gap:5px">
+        <span style="font-size:10px;color:#475569;min-width:18px;text-align:right">#${i+1}</span>
+        <img class="aug-img-sm ${r.rarity.cls}" data-augid="${r.aug.id}" src="${IMG_PH}" ${IMG_ERR}>
+        <span class="aug-name" style="flex:1">${r.name}</span>
+        <span style="font-size:10px;font-weight:700;color:${clr};min-width:12px">${r.tier}</span>
+      </div>`;
+    };
+    const paired = left.map((l, i) => {
+      const ri = right[i];
+      return `<div style="display:grid;grid-template-columns:1fr 1fr;gap:2px">
+        ${cell(l, i*2)}
+        ${ri ? cell(ri, i*2+1) : '<div></div>'}
+      </div>`;
+    }).join('');
+
+    const listHtml = rows.length
+      ? `<div class="opgg-block">
+          <div class="opgg-block-hdr">增幅排行 TOP${top.length} <span style="color:#475569;font-weight:normal">/ 共 ${rows.length}</span></div>
+          <div style="display:flex;flex-direction:column;gap:2px">${paired}</div>
+        </div>`
+      : '<div class="text-[10px] text-slate-600">暫無增幅資料（請在選角階段查詢以載入名稱）</div>';
+
+    body.innerHTML = `<div class="opgg-grid">${balanceHtml}${listHtml}</div>`;
+    body.querySelectorAll('.aug-img-sm').forEach(async img => {
+      img.src = await eel.get_augment_image_base64_by_id(parseInt(img.dataset.augid))() || IMG_PH;
+    });
+  } catch(e) {
+    body.innerHTML = `<div class="text-[10px] text-slate-600">大混戰增幅載入失敗: ${e}</div>`;
+  }
+}
+
 function _renderOpgg(body, d, champId) {
+  // 競技場模式：有 augment_group 就走 arena 渲染
+  if (d.augment_group && d.augment_group.length) {
+    _renderOpggArena(body, d, champId);
+    return;
+  }
   const spells = (d.summoner_spells || [])[0];
   const rune   = (d.runes || [])[0];
   const core   = (d.core_items || [])[0];

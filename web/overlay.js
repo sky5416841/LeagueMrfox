@@ -1,5 +1,6 @@
 // ── 選角戰術中樞 浮窗 ──────────────────────────────────────────────────
 // 英雄方形圖示（Community Dragon，依數值 championId 取得，免 LCU 依賴）
+let _currentQueueMode = 'ranked';  // ranked / aram / arena
 const CHAMP_ICON = id =>
   `https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/v1/champion-icons/${id}.png`;
 const ICON_ERR = "this.onerror=null;this.parentElement.classList.add('img-err')";
@@ -72,6 +73,15 @@ function on_champ_select_update(state) {
   } else {
     bansSec.style.display = 'none';
   }
+
+  // 佇列模式變更時更新標題
+  const newMode = state.queueMode || 'ranked';
+  if (newMode !== _currentQueueMode) {
+    _currentQueueMode = newMode;
+    const modeLabel = { ranked: '積分/一般', aram: '大亂鬥', arena: '競技場', kiwi: '大混戰' }[newMode] || newMode;
+    const phaseEl = document.getElementById('ov-phase');
+    if (phaseEl) phaseEl.textContent = `CHAMP SELECT · ${modeLabel}`;
+  }
 }
 
 // 進入時載入 meta 推薦禁用（依線路分組）
@@ -80,6 +90,8 @@ const LANE_ORDER = ['TOP', 'JUNGLE', 'MID', 'ADC', 'SUPPORT'];
 
 async function _loadBanHelper() {
   const el = document.getElementById('ov-banhelp-lanes');
+  const subEl = document.getElementById('ov-banhelp-mode');
+  if (subEl) subEl.textContent = '依線路 · 當前 meta 強勢';
   try {
     const lanes = await eel.get_ban_helper_by_lane('ranked', 4)();
     if (!lanes || !LANE_ORDER.some(k => (lanes[k] || []).length)) {
