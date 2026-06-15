@@ -1,6 +1,15 @@
-<!-- ───── 歐付寶收款資格驗證 ───── -->
+<!-- ───── 歐付寶會員編號 ───── -->
 > **歐付寶（O'Pay）會員編號：2362516**
-> 本頁面（GitHub 帳號 sky5416841）為本人所有，此資訊用於歐付寶收款資格驗證。
+
+<p align="center">
+  <a href="https://payment.opay.tw/Broadcaster/Donate/BD8ACE458D62BBF559C831369292EC71">
+    <img src="https://img.shields.io/badge/斗內贊助-O'Pay%20歐付寶-FF4B4B?style=for-the-badge&logo=buymeacoffee&logoColor=white" alt="斗內贊助">
+  </a>
+  &nbsp;
+  <a href="https://discord.gg/pTkqCkf5kF">
+    <img src="https://img.shields.io/badge/加入-Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Discord">
+  </a>
+</p>
 
 ---
 
@@ -129,15 +138,3 @@ build.bat
 - 請勿用於違反 Riot Games 服務條款的行為
 - LCU API 為非官方介面，Riot 可能隨時異動，使用風險自負
 - ⚠️ 持續開發中，可能存在 Bug 及功能不完善之處，敬請見諒
-
----
-
-## ☕ 支持作者 / 斗內
-
-如果這個工具對你有幫助，歡迎自由贊助，支持後續開發與維護 🦊
-
-<p align="center">
-  <a href="https://payment.opay.tw/Broadcaster/Donate/BD8ACE458D62BBF559C831369292EC71">
-    <img src="https://img.shields.io/badge/斗內贊助-O'Pay%20歐付寶-FF4B4B?style=for-the-badge&logo=buymeacoffee&logoColor=white" alt="斗內贊助">
-  </a>
-</p>
