@@ -110,6 +110,17 @@
         <div><span class="text-slate-700">PORT</span> <span id="lcu-port">---</span></div>
         <div><span class="text-slate-700">AUTH</span> BASIC // riot</div>
       </div>
+
+      <!-- ══ 斗內贊助 ══ -->
+      <div class="mt-2 pt-2 border-t border-slate-900">
+        <a href="https://payment.opay.tw/Broadcaster/Donate/BD8ACE458D62BBF559C831369292EC71"
+           target="_blank" rel="noopener"
+           class="flex items-center justify-center gap-1.5 text-[10px] tracking-wider
+                  border border-rose-500/40 text-rose-300 py-1
+                  hover:bg-rose-500/10 hover:border-rose-400 transition-all">
+          ☕ 斗內贊助作者
+        </a>
+      </div>
     </div>
 
   </aside>
@@ -526,6 +537,23 @@
   </div>
 </div>
 
-<script src="app.js?v=42"></script>
+<!-- ── 玩家個人詳細頁 Modal ── -->
+<div id="player-modal" style="display:none"
+     class="fixed inset-0 z-[10000] flex items-center justify-center">
+  <div class="game-modal-backdrop" onclick="closePlayerModal()"></div>
+  <div class="player-modal-panel">
+    <div class="game-modal-hdr">
+      <span class="text-cyan-600 tracking-widest">// 玩家個人戰績</span>
+      <span id="player-modal-name" class="text-[11px] text-cyan-300 ml-3"></span>
+      <button onclick="closePlayerModal()" class="game-modal-close">[ X ]</button>
+    </div>
+    <div id="player-modal-body" class="player-modal-body custom-scroll"></div>
+    <div class="game-modal-ftr">
+      按 <span class="text-cyan-900 tracking-widest">ESC</span> 或點擊背景關閉
+    </div>
+  </div>
+</div>
+
+<script src="app.js?v=43"></script>
 </body>
 </html>
