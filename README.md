@@ -1,3 +1,9 @@
+<!-- ───── 歐付寶收款資格驗證 ───── -->
+> **歐付寶（O'Pay）會員編號：2362516**
+> 本頁面（GitHub 帳號 sky5416841）為本人所有，此資訊用於歐付寶收款資格驗證。
+
+---
+
 <p align="center">
   <img src="logo.png" width="160" alt="LeagueMrfox Logo">
 </p>
