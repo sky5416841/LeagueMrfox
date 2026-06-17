@@ -708,6 +708,145 @@ def _aggregate_player_stats(puuid: str, count: int = 20) -> dict:
     return zero
 
 
+@eel.expose
+def get_player_detail(puuid: str, count: int = 20) -> dict:
+    """點擊雷達玩家後，回傳該玩家的完整個人頁資料。
+    含：聚合摘要、段位、完整拿手英雄列表、近期逐場戰績（附 gameId 供點擊看全場）。
+    無法取得時回傳 ok=False。
+    """
+    if not _client or not puuid:
+        return {"ok": False}
+
+    games = _fetch_player_games_sgp(puuid, count)
+    if not games:
+        try:
+            raw   = _client.get(
+                f"/lol-match-history/v1/products/lol/{puuid}/matches"
+                f"?begIndex=0&endIndex={max(0, count - 1)}"
+            )
+            games = raw.get("games", {}).get("games", [])
+        except Exception:
+            games = []
+
+    wins = kills = deaths = assists = cnt = 0
+    champ_stats: dict[int, dict] = {}     # championId -> {games, wins}
+    recent_games: list[dict] = []         # 逐場（最新在前）
+    for g in games:
+        if g.get("gameDuration", 999) < 240:
+            continue
+        pdata = None
+        for p in g.get("participants", []):
+            if p.get("puuid") == puuid:
+                pdata = p; break
+        if not pdata:
+            for ident in g.get("participantIdentities", []):
+                if ident.get("player", {}).get("puuid") == puuid:
+                    pid   = ident.get("participantId")
+                    pdata = next((p for p in g.get("participants", [])
+                                  if p.get("participantId") == pid), None)
+                    break
+        if not pdata:
+            continue
+        stats = pdata.get("stats") or pdata
+        if stats.get("win") is None and stats.get("kills") is None:
+            continue
+        won = bool(stats.get("win"))
+        k = stats.get("kills", 0); d = stats.get("deaths", 0); a = stats.get("assists", 0)
+        ch_id = pdata.get("championId") or stats.get("championId") or 0
+        cnt     += 1
+        wins    += 1 if won else 0
+        kills   += k; deaths += d; assists += a
+        if ch_id:
+            cs = champ_stats.setdefault(ch_id, {"games": 0, "wins": 0})
+            cs["games"] += 1
+            cs["wins"]  += 1 if won else 0
+        recent_games.append({
+            "gameId":       g.get("gameId") or 0,
+            "queueId":      g.get("queueId") or 0,
+            "gameCreation": g.get("gameCreation") or 0,
+            "duration":     g.get("gameDuration") or 0,
+            "win":          won,
+            "championId":   ch_id,
+            "championName": _get_champ_name(ch_id) if ch_id else "",
+            "k": k, "d": d, "a": a,
+            "kda":          round((k + a) / max(d, 1), 2),
+        })
+
+    # 完整拿手英雄列表（依場次→勝率排序）
+    ranked = sorted(
+        champ_stats.items(),
+        key=lambda kv: (kv[1]["games"], kv[1]["wins"] / kv[1]["games"]),
+        reverse=True,
+    )
+    champions = [
+        {
+            "championId":   cid,
+            "championName": _get_champ_name(cid),
+            "games":        cs["games"],
+            "wins":         cs["wins"],
+            "winRate":      round(cs["wins"] / cs["games"] * 100, 1),
+        }
+        for cid, cs in ranked
+    ]
+
+    rank = {}
+    try:
+        rank = _fetch_ranked_stats(puuid)
+    except Exception as e:
+        _log(f"PLAYER_DETAIL >> 段位失敗: {e}")
+
+    # ── 完整檔案頁所需的進階資料（沿用既有共用函式，免額外抓對局）──
+    dual_rank = _fetch_ranked_dual(puuid)
+    overview  = _compute_overview(games, puuid)
+
+    # 逐場完整卡片（與儀表板 _buildMatchCard 相容；以該玩家視角解析）
+    match_cards: list[dict] = []
+    for g in games:
+        try:
+            card = _parse_one_game(g, "sgp", puuid)
+            if card:
+                match_cards.append(card)
+        except Exception as ce:
+            _log(f"PLAYER_DETAIL >> 卡片解析失敗 gameId={g.get('gameId','?')}: {ce}")
+
+    # 召喚師基本資料（頭像 / 等級 / 顯示名稱）
+    profile_icon = 0
+    summoner_lv  = 0
+    display_name = ""
+    try:
+        s = _client.get(f"/lol-summoner/v2/summoners/puuid/{puuid}")
+        profile_icon = s.get("profileIconId", 0)
+        summoner_lv  = s.get("summonerLevel", 0)
+        gname        = (s.get("gameName") or s.get("displayName") or "").strip()
+        gtag         = (s.get("tagLine") or "").strip()
+        display_name = f"{gname}#{gtag}" if gtag else gname
+    except Exception as e:
+        _log(f"PLAYER_DETAIL >> 召喚師資料失敗: {e}")
+
+    return {
+        "ok":          cnt > 0,
+        "puuid":       puuid,
+        "wins":        wins,
+        "total":       cnt,
+        "winRate":     round(wins / cnt * 100, 1) if cnt else 0.0,
+        "avgKills":    round(kills   / cnt, 1) if cnt else 0.0,
+        "avgDeaths":   round(deaths  / cnt, 1) if cnt else 0.0,
+        "avgAssists":  round(assists / cnt, 1) if cnt else 0.0,
+        "kda":         round((kills + assists) / max(deaths, 1), 2) if cnt else 0.0,
+        "champions":   champions,
+        "recentGames": recent_games,
+        "rank":        rank,
+        "rankSolo":    dual_rank["solo"],
+        "rankFlex":    dual_rank["flex"],
+        "overview":    overview,
+        "matchCards":  match_cards,
+        "profileIconId": profile_icon,
+        "summonerLevel": summoner_lv,
+        "displayName":   display_name,
+        "tagInfo":     _get_tag(puuid),
+    }
+
+
 _last_recorded_game_id = None  # 防止同一場重複計入勝負記錄
 
 
@@ -770,84 +909,92 @@ def _record_game_result():
         _log(f"TAGGED_RECORD_ERR >> {e}")
 
 
+_OVERVIEW_ZERO = {"games": 0, "wins": 0, "losses": 0, "winRate": 0.0, "kda": 0.0,
+                  "avgKills": 0.0, "avgDeaths": 0.0, "avgAssists": 0.0,
+                  "killParticipation": 0.0, "damageShare": 0.0,
+                  "goldShare": 0.0, "csShare": 0.0}
+
+
+def _compute_overview(games: list, puuid: str) -> dict:
+    """從一批 SGP/LCU 原始 game 計算指定玩家的進階數據：
+    參團率、傷害比、經濟比、補刀比等。可用於本人或任意玩家。
+    games 取不到玩家或為空時回傳全零。
+    """
+    if not games or not puuid:
+        return dict(_OVERVIEW_ZERO)
+    n = wins = 0
+    sumK = sumD = sumA = 0
+    sumKP = sumDmgShare = sumGoldShare = sumCsShare = 0.0
+    for g in games:
+        if g.get("gameDuration", 999) < 240:
+            continue
+        parts = g.get("participants", [])
+        idents = {i.get("participantId"): i.get("player", {}).get("puuid", "")
+                  for i in g.get("participantIdentities", [])}
+        # 找目標玩家
+        me = None
+        for p in parts:
+            pu = p.get("puuid") or idents.get(p.get("participantId"), "")
+            if pu == puuid:
+                me = p; break
+        if not me:
+            continue
+        ms = me.get("stats") or me
+        my_tid = me.get("teamId") or ms.get("teamId") or 0
+
+        # 同隊統計
+        tK = tDmg = tGold = tCs = 0
+        for p in parts:
+            st = p.get("stats") or p
+            tid = p.get("teamId") or st.get("teamId") or 0
+            if tid != my_tid:
+                continue
+            tK   += st.get("kills", 0)
+            tDmg += st.get("totalDamageDealtToChampions", 0)
+            tGold+= st.get("goldEarned", 0)
+            tCs  += st.get("totalMinionsKilled", 0) + st.get("neutralMinionsKilled", 0)
+
+        mk = ms.get("kills", 0); md = ms.get("deaths", 0); ma = ms.get("assists", 0)
+        myDmg = ms.get("totalDamageDealtToChampions", 0)
+        myGold= ms.get("goldEarned", 0)
+        myCs  = ms.get("totalMinionsKilled", 0) + ms.get("neutralMinionsKilled", 0)
+
+        n += 1
+        wins += 1 if ms.get("win") else 0
+        sumK += mk; sumD += md; sumA += ma
+        sumKP        += (mk + ma) / tK   if tK   else 0
+        sumDmgShare  += myDmg / tDmg      if tDmg else 0
+        sumGoldShare += myGold / tGold    if tGold else 0
+        sumCsShare   += myCs / tCs        if tCs  else 0
+
+    if n == 0:
+        return dict(_OVERVIEW_ZERO)
+    return {
+        "games":   n,
+        "wins":    wins,
+        "losses":  n - wins,
+        "winRate": round(wins / n * 100, 1),
+        "kda":     round((sumK + sumA) / max(sumD, 1), 2),
+        "avgKills":   round(sumK / n, 1),
+        "avgDeaths":  round(sumD / n, 1),
+        "avgAssists": round(sumA / n, 1),
+        "killParticipation": round(sumKP / n * 100, 1),
+        "damageShare":       round(sumDmgShare / n * 100, 1),
+        "goldShare":         round(sumGoldShare / n * 100, 1),
+        "csShare":           round(sumCsShare / n * 100, 1),
+    }
+
+
 @eel.expose
 def get_personal_overview(count: int = 20) -> dict:
     """統計本人近 count 場的進階數據：參團率、傷害比、經濟比、補刀比等。"""
-    zero = {"games": 0, "wins": 0, "losses": 0, "winRate": 0.0, "kda": 0.0,
-            "avgKills": 0.0, "avgDeaths": 0.0, "avgAssists": 0.0,
-            "killParticipation": 0.0, "damageShare": 0.0,
-            "goldShare": 0.0, "csShare": 0.0}
     if not _puuid:
-        return zero
+        return dict(_OVERVIEW_ZERO)
     try:
-        games = _fetch_player_games_sgp(_puuid, count)
-        if not games:
-            return zero
-
-        n = wins = 0
-        sumK = sumD = sumA = 0
-        sumKP = sumDmgShare = sumGoldShare = sumCsShare = 0.0
-        for g in games:
-            if g.get("gameDuration", 999) < 240:
-                continue
-            parts = g.get("participants", [])
-            idents = {i.get("participantId"): i.get("player", {}).get("puuid", "")
-                      for i in g.get("participantIdentities", [])}
-            # 找自己
-            me = None
-            for p in parts:
-                pu = p.get("puuid") or idents.get(p.get("participantId"), "")
-                if pu == _puuid:
-                    me = p; break
-            if not me:
-                continue
-            ms = me.get("stats") or me
-            my_tid = me.get("teamId") or ms.get("teamId") or 0
-
-            # 同隊統計
-            tK = tDmg = tGold = tCs = 0
-            for p in parts:
-                st = p.get("stats") or p
-                tid = p.get("teamId") or st.get("teamId") or 0
-                if tid != my_tid:
-                    continue
-                tK   += st.get("kills", 0)
-                tDmg += st.get("totalDamageDealtToChampions", 0)
-                tGold+= st.get("goldEarned", 0)
-                tCs  += st.get("totalMinionsKilled", 0) + st.get("neutralMinionsKilled", 0)
-
-            mk = ms.get("kills", 0); md = ms.get("deaths", 0); ma = ms.get("assists", 0)
-            myDmg = ms.get("totalDamageDealtToChampions", 0)
-            myGold= ms.get("goldEarned", 0)
-            myCs  = ms.get("totalMinionsKilled", 0) + ms.get("neutralMinionsKilled", 0)
-
-            n += 1
-            wins += 1 if ms.get("win") else 0
-            sumK += mk; sumD += md; sumA += ma
-            sumKP        += (mk + ma) / tK   if tK   else 0
-            sumDmgShare  += myDmg / tDmg      if tDmg else 0
-            sumGoldShare += myGold / tGold    if tGold else 0
-            sumCsShare   += myCs / tCs        if tCs  else 0
-
-        if n == 0:
-            return zero
-        return {
-            "games":   n,
-            "wins":    wins,
-            "losses":  n - wins,
-            "winRate": round(wins / n * 100, 1),
-            "kda":     round((sumK + sumA) / max(sumD, 1), 2),
-            "avgKills":   round(sumK / n, 1),
-            "avgDeaths":  round(sumD / n, 1),
-            "avgAssists": round(sumA / n, 1),
-            "killParticipation": round(sumKP / n * 100, 1),
-            "damageShare":       round(sumDmgShare / n * 100, 1),
-            "goldShare":         round(sumGoldShare / n * 100, 1),
-            "csShare":           round(sumCsShare / n * 100, 1),
-        }
+        return _compute_overview(_fetch_player_games_sgp(_puuid, count), _puuid)
     except Exception as e:
         _log(f"OVERVIEW_ERR >> {e}")
-        return zero
+        return dict(_OVERVIEW_ZERO)
 
 
 @eel.expose
@@ -1022,6 +1169,57 @@ def _fetch_ranked_stats(puuid: str) -> dict:
     except Exception as e:
         _log(f"RANKED_ERR >> {puuid[:8] if puuid else '?'}: {e}")
         return zero
+
+
+def _format_ranked_queue(entry: dict | None) -> dict:
+    """把單一隊列的段位原始資料格式化為前端可用結構。無段位回傳 UNRANKED。"""
+    zero = {"tier": "UNRANKED", "tierText": "未排位", "division": "",
+            "rankWins": 0, "rankLosses": 0, "rankWinRate": 0.0, "lp": 0}
+    if not entry:
+        return zero
+    tier = (entry.get("tier") or "").upper()
+    if tier in _NO_RANK:
+        return zero
+    division = (entry.get("division") or entry.get("rank") or "")
+    wins     = entry.get("wins", 0)
+    losses   = entry.get("losses", 0)
+    lp       = entry.get("leaguePoints", 0)
+    total    = wins + losses
+    wr       = round(wins / total * 100, 1) if total > 0 else 0.0
+    icon     = _TIER_ICON.get(tier, "")
+    zh       = _TIER_ZH.get(tier, tier)
+    if tier in ("MASTER", "GRANDMASTER", "CHALLENGER"):
+        tier_text = f"{icon} {zh}"
+    else:
+        tier_text = f"{icon} {zh} {_DIV_MAP.get(division, division)}"
+    return {
+        "tier":        tier,
+        "tierText":    tier_text,
+        "division":    division,
+        "rankWins":    wins,
+        "rankLosses":  losses,
+        "rankWinRate": wr,
+        "lp":          lp,
+    }
+
+
+def _fetch_ranked_dual(puuid: str) -> dict:
+    """同時取得單雙排位與彈性排位段位，供玩家完整檔案頁顯示。
+    回傳 {"solo": {...}, "flex": {...}}，各自為 _format_ranked_queue 結構。
+    """
+    zero = {"tier": "UNRANKED", "tierText": "未排位", "division": "",
+            "rankWins": 0, "rankLosses": 0, "rankWinRate": 0.0, "lp": 0}
+    if not puuid or not _client:
+        return {"solo": dict(zero), "flex": dict(zero)}
+    try:
+        data   = _client.get(f"/lol-ranked/v1/ranked-stats/{puuid}")
+        queues = data.get("queues") or list((data.get("queueMap") or {}).values())
+        solo = next((q for q in queues if q.get("queueType") == "RANKED_SOLO_5x5"), None)
+        flex = next((q for q in queues if q.get("queueType") == "RANKED_FLEX_SR"),  None)
+        return {"solo": _format_ranked_queue(solo), "flex": _format_ranked_queue(flex)}
+    except Exception as e:
+        _log(f"RANKED_DUAL_ERR >> {puuid[:8] if puuid else '?'}: {e}")
+        return {"solo": dict(zero), "flex": dict(zero)}
 
 
 def _maybe_trigger_lobby_scan(my_team: list):
@@ -2092,10 +2290,13 @@ def _grade_game(game: dict, pdata: dict, stats: dict, win: bool, is_remake: bool
         return ""
 
 
-def _parse_one_game(game: dict, source: str) -> dict | None:
+def _parse_one_game(game: dict, source: str, target_puuid: str | None = None) -> dict | None:
     """解析單場遊戲資料，相容 LCU 格式（stats 巢狀）與 SGP 格式（stats 攤平）。
+    target_puuid 預設為本人 _puuid；傳入其他 puuid 時改以該玩家視角解析（供玩家詳細頁沿用）。
     回傳解析好的 dict，找不到玩家或失敗時回傳 None。
     """
+    tp     = target_puuid or _puuid
+    is_self = (tp == _puuid)
     _QUEUES_LOCAL = {
         420: "排位賽", 440: "彈性排位", 450: "大亂鬥",
         400: "一般對戰", 430: "一般對戰", 700: "衝突",
@@ -2107,18 +2308,18 @@ def _parse_one_game(game: dict, source: str) -> dict | None:
 
     # SGP / 新版 LCU：participants[].puuid 直接存在
     for p in game.get("participants", []):
-        if p.get("puuid") == _puuid:
+        if p.get("puuid") == tp:
             our_pid = p.get("participantId")
             our_puuid_matched = True
             break
 
-    # 舊版 LCU：透過 participantIdentities 查 participantId
+    # 舊版 LCU：透過 participantIdentities 查 participantId（accountId 比對僅限本人）
     if not our_puuid_matched:
         for ident in game.get("participantIdentities", []):
             pl = ident.get("player", {})
-            if (_puuid      and pl.get("puuid")            == _puuid) or \
-               (_account_id and pl.get("accountId")        == _account_id) or \
-               (_account_id and pl.get("currentAccountId") == _account_id):
+            if (tp          and pl.get("puuid")            == tp) or \
+               (is_self and _account_id and pl.get("accountId")        == _account_id) or \
+               (is_self and _account_id and pl.get("currentAccountId") == _account_id):
                 our_pid = ident.get("participantId")
                 break
 
@@ -2126,8 +2327,8 @@ def _parse_one_game(game: dict, source: str) -> dict | None:
         return None
 
     for p in game.get("participants", []):
-        # 用 puuid 或 participantId 定位自己
-        matched = (p.get("puuid") == _puuid) if our_puuid_matched \
+        # 用 puuid 或 participantId 定位目標玩家
+        matched = (p.get("puuid") == tp) if our_puuid_matched \
                   else (p.get("participantId") == our_pid)
         if not matched:
             continue
@@ -2563,14 +2764,16 @@ def get_game_detail(game_id: int) -> dict:
         game_mode = raw.get("gameMode", "")
         is_arena  = game_mode in ("KIWI", "CHERRY")
 
-        # participantId → 召喚師名稱
+        # participantId → 召喚師名稱 / puuid
         id_map = {}
+        puuid_map = {}
         for ident in raw.get("participantIdentities", []):
             pid  = ident.get("participantId")
             p    = ident.get("player", {})
             name = (p.get("gameName") or p.get("summonerName") or "---").strip()
             tag  = (p.get("tagLine") or "").strip()
             id_map[pid] = f"{name}#{tag}" if tag else name
+            puuid_map[pid] = p.get("puuid", "") or ""
 
         # 提取隊伍目標資料 (baron/dragon/tower/inhibitor)
         objectives: dict[int, dict] = {}
@@ -2633,6 +2836,7 @@ def get_game_detail(game_id: int) -> dict:
 
             entry = {
                 "summonerName": id_map.get(pid, f"Player{pid}"),
+                "puuid":        puuid_map.get(pid, "") or (p.get("puuid", "") or ""),
                 "championId":   champ_id,
                 "championName": _get_champ_name(champ_id),
                 "champLevel":   stats.get("champLevel", 0),

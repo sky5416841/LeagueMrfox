@@ -2,7 +2,7 @@
 
 // Tailwind CDN 會在 body 注入浮水印徽章，偵測並移除非己方元素
 (function removeCdnBadge() {
-  const ours = new Set(['accept-flash', 'game-modal', 'titlebar', 'tag-modal']);
+  const ours = new Set(['accept-flash', 'game-modal', 'titlebar', 'tag-modal', 'player-modal']);
   function sweep() {
     document.querySelectorAll('body > div').forEach(el => {
       if (ours.has(el.id) || el.classList.contains('scanlines')) return;
@@ -275,9 +275,9 @@ function _renderLiveCard(p) {
     if (vw + vl > 0) recs.push(`<span class="tag-rec tag-rec-vs" title="與此人對敵">對敵 ${vw}-${vl}</span>`);
     tagHtml += recs.join('');
   }
-  // 標記按鈕（有 puuid 才能標記）
+  // 標記按鈕（有 puuid 才能標記）；stopPropagation 避免觸發卡片點擊
   const tagBtn = p.puuid
-    ? `<button class="tag-btn" onclick="openTagModal('${p.puuid}', ${JSON.stringify((p.name||'').replace(/'/g,'')).replace(/"/g,'&quot;')})" title="標記此玩家">✎</button>`
+    ? `<button class="tag-btn" onclick="event.stopPropagation();openTagModal('${p.puuid}', ${JSON.stringify((p.name||'').replace(/'/g,'')).replace(/"/g,'&quot;')})" title="標記此玩家">✎</button>`
     : '';
 
   // 戰績區（匿名玩家只要有 PUUID 資料就照樣顯示，不隱藏）
@@ -331,6 +331,11 @@ function _renderLiveCard(p) {
 
   const selfClass  = isSelf  ? ' live-card-self'  : '';
   const enemyClass = isEnemy ? ' live-card-enemy' : '';
+  // 可點擊查看個人頁（需有 puuid）
+  const clickable  = p.puuid ? ' live-card-clickable' : '';
+  const clickAttr  = p.puuid
+    ? ` onclick="openPlayerModal('${p.puuid}', ${JSON.stringify((p.name||'').replace(/'/g,'')).replace(/"/g,'&quot;')}, ${isAnon ? 'true' : 'false'})"`
+    : '';
 
   // 左側圖示：有英雄時顯示頭像，選角大廳時顯示 cellId 數字
   const iconHtml = hasChamp
@@ -341,7 +346,7 @@ function _renderLiveCard(p) {
     : `<div class="live-cell-id">${p.cellId ?? ''}</div>`;
 
   return `
-    <div class="live-card${selfClass}${enemyClass}">
+    <div class="live-card${selfClass}${enemyClass}${clickable}"${clickAttr}>
       <div class="flex items-center gap-3">
         ${iconHtml}
         <div class="flex-1 min-w-0">
@@ -392,6 +397,165 @@ async function saveTag() {
   }
   closeTagModal();
   append_log(tag ? `TAGGED ▶▶ 已標記：${tag}` : 'TAGGED ▶▶ 已移除標記', true);
+}
+
+// ── 玩家個人詳細頁 Modal ────────────────────────────────────────────────
+const _QUEUE_NAME = {
+  420: '單雙排', 430: '一般', 440: '彈性排', 450: '大亂鬥',
+  700: '冠軍杯', 1700: '鬥魂競技', 1710: '鬥魂競技', 1900: 'URF',
+  490: '快速配對', 400: '一般', 2400: '大混戰', 3270: '大混戰',
+};
+function _wrColor(wr) {
+  return wr >= 60 ? '#4ade80' : wr >= 50 ? '#a3e635' : wr >= 40 ? '#fb923c' : '#f87171';
+}
+// 段位牌位小圖（opgg CDN，與儀表板一致）
+function _rankMedalSrc(tier) {
+  return tier && !['UNRANKED', 'NONE', 'NA', ''].includes(tier)
+    ? `https://opgg-static.akamaized.net/images/medals_new/${tier.toLowerCase()}.png`
+    : '';
+}
+// 單一段位磚（單雙 / 彈性）
+function _pmRankTile(label, r) {
+  r = r || {};
+  const ranked = r.tier && !['UNRANKED', 'NONE', 'NA', ''].includes(r.tier);
+  const medal  = _rankMedalSrc(r.tier);
+  return `
+    <div class="pm-rank-tile${ranked ? '' : ' pm-rank-tile-empty'}">
+      <div class="pm-rank-tile-label">${label}</div>
+      ${ranked
+        ? `${medal ? `<img class="pm-rank-medal" src="${medal}" alt="" onerror="this.style.display='none'">` : ''}
+           <div class="pm-rank-tile-main">${r.tierText || ''}</div>
+           <div class="pm-rank-tile-sub">${r.lp || 0} LP · <span style="color:${_wrColor(r.rankWinRate || 0)}">${r.rankWinRate || 0}%</span> · ${r.rankWins || 0}W ${r.rankLosses || 0}L</div>`
+        : `<div class="pm-rank-tile-main pm-rank-unranked">未排位</div>`}
+    </div>`;
+}
+
+async function openPlayerModal(puuid, playerName, isAnon = false) {
+  if (!puuid) return;
+  const modal = document.getElementById('player-modal');
+  modal.style.display = 'flex';
+  const nameEl = document.getElementById('player-modal-name');
+  if (isAnon) {
+    nameEl.innerHTML = `<span class="pm-anon-badge">🕶️ 匿名玩家</span>` +
+      (playerName ? `<span class="pm-anon-sub">${playerName}</span>` : '');
+  } else {
+    nameEl.textContent = playerName || '玩家';
+  }
+  const body = document.getElementById('player-modal-body');
+  body.innerHTML = '<div class="modal-loading">▮ 載入操作員檔案中...</div>';
+
+  let d;
+  try {
+    d = await eel.get_player_detail(puuid, 20)();
+  } catch (e) {
+    append_log(`PLAYER_DETAIL_ERR >> ${e}`, true);
+    body.innerHTML = '<div class="modal-loading">// 載入失敗，請查看 Console</div>';
+    return;
+  }
+  if (!d || !d.ok) {
+    body.innerHTML = '<div class="modal-loading">// 查無此玩家的戰績資料</div>';
+    return;
+  }
+
+  const ov  = d.overview || {};
+  const lv  = d.summonerLevel || 0;
+  const dispName = (!isAnon && d.displayName) ? d.displayName : (playerName || '玩家');
+
+  // ── 操作員檔案頭部（頭像 + 名稱 + 雙段位 + 等級條）──
+  const headerHtml = `
+    <div class="pm-profile">
+      <div class="pm-avatar-wrap">
+        <img id="pm-avatar-img" class="pm-avatar" src="${IMG_PH}" alt="" onerror="this.style.opacity=0">
+        ${lv ? `<span class="pm-avatar-lv">${lv}</span>` : ''}
+      </div>
+      <div class="pm-profile-main">
+        <div class="pm-profile-name">${dispName}</div>
+        <div class="pm-rank-tiles">
+          ${_pmRankTile('單雙', d.rankSolo)}
+          ${_pmRankTile('彈性', d.rankFlex)}
+        </div>
+      </div>
+    </div>`;
+
+  // ── 近況總覽（8 格，與儀表板一致）──
+  const ovCell = (label, val, color) =>
+    `<div class="pm-ov-cell"><div class="pm-ov-val"${color ? ` style="color:${color}"` : ''}>${val}</div><div class="pm-ov-lbl">${label}</div></div>`;
+  const hasOv = (ov.games || 0) > 0;
+  const overviewHtml = `
+    <div class="pm-section-title">近況總覽 <span class="pm-section-sub">近 ${ov.games || d.total || 0} 場</span></div>
+    <div class="pm-overview">
+      ${hasOv ? (
+        ovCell('勝率', `${ov.winRate}%`, _wrColor(ov.winRate)) +
+        ovCell('戰績', `${ov.wins}W ${ov.losses}L`) +
+        ovCell('平均 KDA', ov.kda, ov.kda >= 3 ? '#4ade80' : '') +
+        ovCell('K/D/A', `${ov.avgKills}/${ov.avgDeaths}/${ov.avgAssists}`) +
+        ovCell('參團率', `${ov.killParticipation}%`) +
+        ovCell('傷害比', `${ov.damageShare}%`) +
+        ovCell('經濟比', `${ov.goldShare}%`) +
+        ovCell('補刀比', `${ov.csShare}%`)
+      ) : (
+        ovCell('勝率', `${d.winRate}%`, _wrColor(d.winRate)) +
+        ovCell('戰績', `${d.wins}W ${d.total - d.wins}L`) +
+        ovCell('平均 KDA', d.kda, d.kda >= 3 ? '#4ade80' : '') +
+        ovCell('K/D/A', `${d.avgKills}/${d.avgDeaths}/${d.avgAssists}`)
+      )}
+    </div>`;
+
+  // ── 拿手英雄 ──
+  const champs = d.champions || [];
+  const champsHtml = champs.length === 0 ? '' : `
+    <div class="pm-section-title">拿手英雄 <span class="pm-section-sub">${champs.length}</span></div>
+    <div class="pm-champs">
+      ${champs.slice(0, 12).map(c => `
+        <div class="pm-champ" title="${c.championName} · ${c.games}場 · ${c.winRate}%勝">
+          <img class="pm-champ-img" src="${IMG_PH}" ${IMG_ERR} data-champid="${c.championId}" alt="${c.championName}">
+          <div class="pm-champ-info">
+            <div class="pm-champ-name">${c.championName}</div>
+            <div class="pm-champ-stat"><span style="color:${_wrColor(c.winRate)}">${c.winRate}%</span> · ${c.games}場 ${c.wins}W</div>
+          </div>
+        </div>`).join('')}
+    </div>`;
+
+  body.innerHTML =
+    headerHtml + overviewHtml + champsHtml +
+    `<div class="pm-section-title">作戰紀錄 <span class="pm-section-sub">點擊任一場看全場 10 人</span></div>
+     <div id="pm-match-list" class="pm-match-list"></div>`;
+
+  // 載入頭像（透過 LCU 代理）
+  const iconId = parseInt(d.profileIconId, 10);
+  if (iconId > 0) {
+    eel.get_lcu_image_base64(`/lol-game-data/assets/v1/profile-icons/${iconId}.jpg`)()
+      .then(src => { if (src) { const a = document.getElementById('pm-avatar-img'); if (a) a.src = src; } })
+      .catch(() => {});
+  }
+
+  // 拿手英雄頭像
+  body.querySelectorAll('.pm-champ-img[data-champid]').forEach(img =>
+    _loadChampIcon(parseInt(img.dataset.champid), img));
+
+  // ── 逐場完整卡片（沿用儀表板 _buildMatchCard，含符文/裝備/CS/結果）──
+  const list  = document.getElementById('pm-match-list');
+  const cards = d.matchCards || [];
+  if (cards.length === 0) {
+    list.innerHTML = '<div class="no-more-records">── 尚無作戰紀錄 ──</div>';
+  } else {
+    for (const m of cards) {
+      const card = _buildMatchCard(m);
+      list.appendChild(card);
+      _loadChampIcon(m.championId, card.querySelector('.champ-img'));
+      _loadItemIcons(m.items || [], card.querySelectorAll('.item-icon'));
+      _loadSpellIcons([m.spell1Id, m.spell2Id], card.querySelectorAll('.spell-icon'));
+      if (m.isArena) {
+        const validAugs = (m.augments || []).filter(a => a && a.id > 0);
+        _loadAugmentIcons(validAugs.map(a => a.id), card.querySelectorAll('.mc-aug-icon'));
+      } else {
+        _loadRuneIcons((m.runes || []).filter(x => x > 0), card.querySelectorAll('.mc-rune-icon'));
+      }
+    }
+  }
+}
+function closePlayerModal() {
+  document.getElementById('player-modal').style.display = 'none';
 }
 
 // ── OP.GG 英雄攻略 ─────────────────────────────────────────────────────
@@ -870,6 +1034,7 @@ document.addEventListener('keydown', (e) => {
   const dd = document.getElementById('champ-picker-dropdown');
   if (dd) dd.classList.add('hidden');
   closeGameModal();
+  closePlayerModal();
 });
 
 // ── 自動選角開關 ────────────────────────────────────────────────────────
@@ -1692,8 +1857,14 @@ function _renderModalTeam(sectionId, players, maxDamage, maxDamageTaken, teamCol
       `<img src="${IMG_PH}" class="mt-item empty" alt="" onerror="${IMG_ERR}">`
     ).join('');
 
+    // 有 puuid 時，點召喚師頭像／名稱可開個人詳細頁
+    const pmName    = JSON.stringify((p.summonerName || '').replace(/'/g, '')).replace(/"/g, '&quot;');
+    const identAttr = p.puuid
+      ? ` class="mt-identity mt-identity-clickable" onclick="openPlayerModal('${p.puuid}', ${pmName}, false)" title="查看個人詳細戰績"`
+      : ` class="mt-identity"`;
+
     row.innerHTML =
-      `<div class="mt-identity">` +
+      `<div${identAttr}>` +
         `<div class="mt-champ-wrap">` +
           `<img src="${IMG_PH}" class="mt-champ empty" title="${p.championName}" onerror="${IMG_ERR}">` +
           (lvl ? `<span class="mt-champ-level">${lvl}</span>` : '') +
