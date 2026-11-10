@@ -1284,6 +1284,25 @@ def _build_encounters(count: int = 50) -> dict:
     return out
 
 
+def _with_progress(fn, total: int, kind: str):
+    """包裝逐人掃描函式：每完成一人就推播進度（done/total）給前端。"""
+    lock  = threading.Lock()
+    state = {"done": 0}
+
+    def wrapped(item):
+        try:
+            return fn(item)
+        finally:
+            with lock:
+                state["done"] += 1
+                done = state["done"]
+            try:
+                eel.on_scan_progress(kind, done, total)()
+            except Exception:
+                pass
+    return wrapped
+
+
 def _scan_lobby_sync(my_team: list):
     """背景執行緒：逐一取得隊友召喚師名稱與近 20 場戰績，完成後推播至前端。"""
     global _lobby_scan_in_progress
@@ -1368,7 +1387,7 @@ def _scan_lobby_sync(my_team: list):
 
         _t0 = time.time()
         with ThreadPoolExecutor(max_workers=10) as _pool:
-            results = list(_pool.map(_scan_lobby_one, my_team))
+            results = list(_pool.map(_with_progress(_scan_lobby_one, len(my_team), "lobby"), my_team))
 
         _log(f"LOBBY_SCAN >> 完成！{len(results)} 位玩家情報就緒（耗時 {time.time()-_t0:.1f}s）")
         try:
@@ -1631,7 +1650,8 @@ def _scan_ingame_sync():
         # 並行查詢全場 10 人（每人查戰績+段位，序列太慢）
         _t0 = time.time()
         with ThreadPoolExecutor(max_workers=10) as _pool:
-            _all = list(_pool.map(_scan_one, my_raw + enemy_raw))
+            _all = list(_pool.map(_with_progress(_scan_one, len(my_raw) + len(enemy_raw), "ingame"),
+                                  my_raw + enemy_raw))
         my_team    = _all[:len(my_raw)]
         enemy_team = _all[len(my_raw):]
         _mark_premade_groups(my_team)

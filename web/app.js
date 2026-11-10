@@ -121,20 +121,56 @@ function _renderLiveInto() {
       <div class="ingame-panel">
         <div class="ingame-team-col">
           <div class="ingame-team-hdr ingame-team-hdr-blue">${leftHdr}</div>
+          ${_teamSummaryHtml(s.allies)}
           ${s.allies.map(p => _renderLiveCard(p)).join('')}
         </div>
         <div class="ingame-divider"></div>
         <div class="ingame-team-col">
           <div class="ingame-team-hdr ingame-team-hdr-red">${rightHdr}</div>
+          ${_teamSummaryHtml(s.enemies)}
           ${s.enemies.map(p => _renderLiveCard(p)).join('')}
         </div>
       </div>`;
   } else {
-    playersEl.innerHTML = s.allies.map(p => _renderLiveCard(p)).join('');
+    playersEl.innerHTML = _teamSummaryHtml(s.allies) + s.allies.map(p => _renderLiveCard(p)).join('');
   }
   playersEl.querySelectorAll('[data-champid]').forEach(img => {
     _loadChampIcon(parseInt(img.dataset.champid), img);
   });
+}
+
+// ── 逐人掃描進度 ──────────────────────────────────────────────────────
+eel.expose(on_scan_progress);
+function on_scan_progress(kind, done, total) {
+  const statusEl = document.getElementById('live-status');
+  if (!statusEl) return;
+  const blocks = '▮'.repeat(done) + '▯'.repeat(Math.max(0, total - done));
+  statusEl.textContent = done >= total
+    ? `掃描完成 · ${total} 位`
+    : `${kind === 'ingame' ? '全場雷達' : '大廳'}掃描中 ${blocks} ${done}/${total}`;
+}
+
+// ── 隊伍摘要列（平均勝率 / KDA / 風險提示）──────────────────────────────
+function _teamSummaryHtml(players) {
+  const ps = (players || []).filter(p => p && p.total > 0);
+  if (ps.length === 0) return '';
+  const avg = f => ps.reduce((s, p) => s + (f(p) || 0), 0) / ps.length;
+  const wr  = avg(p => p.winRate);
+  const kda = avg(p => p.kda);
+  const otp   = ps.filter(p => p.poolType === '一招鮮').length;
+  const tilt  = ps.filter(p => p.streakType === 'lose' && p.streakCount >= 3).length;
+  const hot   = ps.filter(p => p.streakType === 'win'  && p.streakCount >= 3).length;
+  const green = ps.filter(p => (p.allChampions || []).length && p.championId > 0 &&
+                               !p.allChampions.some(c => c.championId === p.championId)).length;
+  const chip = (txt, cls, tip) => `<span class="ts-chip ${cls}" title="${tip}">${txt}</span>`;
+  return `<div class="team-summary">
+    <span class="ts-main" title="該隊已掃描玩家的平均值">均勝率 <b style="color:${_wrColor(wr)}">${wr.toFixed(0)}%</b></span>
+    <span class="ts-main">均 KDA <b>${kda.toFixed(2)}</b></span>
+    ${hot   ? chip(`🔥 ${hot} 人連勝`, 'ts-good', '近期連勝 3 場以上') : ''}
+    ${tilt  ? chip(`⚠ ${tilt} 人連敗`, 'ts-bad',  '近期連敗 3 場以上') : ''}
+    ${otp   ? chip(`${otp} 個一招鮮`, 'ts-info', '英雄池高度集中，可針對 ban/克制') : ''}
+    ${green ? chip(`${green} 人生疏`, 'ts-warn', '本場英雄近期未玩過') : ''}
+  </div>`;
 }
 
 eel.expose(on_lobby_scan_ready);
@@ -303,23 +339,6 @@ function _renderLiveCard(p) {
          <div class="live-wr-fill" style="width:${wr}%;background:${wrColor}"></div>
        </div>`;
 
-  // 拿手英雄 Top3
-  const champs = p.topChampions || [];
-  const topChampsHtml = (noData || champs.length === 0) ? '' : `
-    <div class="top-champs">
-      <span class="top-champs-label">拿手</span>${poolHtml}${pickHtml}
-      ${champs.map(c => {
-        const cwr = c.winRate;
-        const cwrColor = cwr >= 60 ? '#4ade80' : cwr >= 50 ? '#a3e635'
-                       : cwr >= 40 ? '#fb923c' : '#f87171';
-        return `<div class="top-champ" title="${c.championName} · ${c.games}場 · ${cwr}%勝">
-          <img class="top-champ-img" src="${IMG_PH}" ${IMG_ERR} data-champid="${c.championId}" alt="${c.championName}">
-          <span class="top-champ-wr" style="color:${cwrColor}">${cwr}%</span>
-          <span class="top-champ-games">${c.games}場</span>
-        </div>`;
-      }).join('')}
-    </div>`;
-
   // 本場英雄熟練度：以近期對局統計判斷是否本命
   let pickHtml = '';
   if (!noData && hasChamp && p.championId && (p.allChampions || []).length) {
@@ -336,6 +355,23 @@ function _renderLiveCard(p) {
   }
   const poolHtml = (!noData && p.poolType)
     ? `<span class="pool-badge" title="英雄池：${p.poolSize} 隻 · 最常用佔 ${p.topShare}%">${p.poolType}</span>` : '';
+
+  // 拿手英雄 Top3
+  const champs = p.topChampions || [];
+  const topChampsHtml = (noData || champs.length === 0) ? '' : `
+    <div class="top-champs">
+      <span class="top-champs-label">拿手</span>${poolHtml}${pickHtml}
+      ${champs.map(c => {
+        const cwr = c.winRate;
+        const cwrColor = cwr >= 60 ? '#4ade80' : cwr >= 50 ? '#a3e635'
+                       : cwr >= 40 ? '#fb923c' : '#f87171';
+        return `<div class="top-champ" title="${c.championName} · ${c.games}場 · ${cwr}%勝">
+          <img class="top-champ-img" src="${IMG_PH}" ${IMG_ERR} data-champid="${c.championId}" alt="${c.championName}">
+          <span class="top-champ-wr" style="color:${cwrColor}">${cwr}%</span>
+          <span class="top-champ-games">${c.games}場</span>
+        </div>`;
+      }).join('')}
+    </div>`;
 
   // 近期表現趨勢（近 5 場 W/L 方塊，綠勝紅敗）
   const rg = p.recentGames || [];
@@ -1149,9 +1185,6 @@ async function loadDashboard() {
   }
 }
 
-function _wrColor(wr) {
-  return wr >= 60 ? '#4ade80' : wr >= 50 ? '#a3e635' : wr >= 40 ? '#fb923c' : '#f87171';
-}
 
 // 折線圖（SVG）：pts 為 [{i, <key>}]，val 取 0~max
 function _sparkline(pts, key, max, color, baseline) {
