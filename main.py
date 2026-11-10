@@ -1329,6 +1329,59 @@ def _norm_name(n: str) -> str:
     return (n or "").split("#")[0].strip().lower()
 
 
+# ── 敵方召喚師技能計時（遊戲 API 不提供敵方施放事件 → 靠全域快捷鍵手動標記）──────────
+# 基礎冷卻秒數（依 rawDisplayName 內含的技能代碼比對）
+_SPELL_BASE_CD = {
+    "SummonerFlash": 300, "SummonerTeleport": 360, "SummonerDot": 180, "SummonerHeal": 240,
+    "SummonerBarrier": 180, "SummonerExhaust": 210, "SummonerBoost": 210, "SummonerHaste": 210,
+    "SummonerSmite": 90, "SummonerMana": 240, "SummonerSnowball": 80,
+}
+_IONIAN_BOOTS = 3158      # 神速之靴：+12 召喚師技能急速（星際洞悉符文無法由 API 得知，未計入）
+_spell_used: dict = {}    # (玩家名, 欄位 1/2) -> 標記當下的遊戲時間（秒）
+_hud_enemies: list = []   # 最近一次 HUD 資料中的敵方玩家（供快捷鍵對應 1~5 號）
+
+
+def _spell_code(raw: str) -> str:
+    for code in _SPELL_BASE_CD:
+        if code in (raw or ""):
+            return code
+    return ""
+
+
+def _spell_cd(code: str, items: list) -> float:
+    base = _SPELL_BASE_CD.get(code, 0)
+    items = items if isinstance(items, list) else []      # 機器人等情況欄位可能不是清單
+    haste = 12 if any(isinstance(i, dict) and i.get("itemID") == _IONIAN_BOOTS for i in items) else 0
+    return round(base * 100 / (100 + haste))
+
+
+def _mark_enemy_spell(idx: int, other: bool):
+    """快捷鍵觸發：把敵方第 idx 號（1~5）的閃現（other=False）或另一招（other=True）標記為剛使用。
+    3 秒內再按同一個鍵 = 取消（按錯時的復原）。"""
+    if not (1 <= idx <= len(_hud_enemies)):
+        return
+    e = _hud_enemies[idx - 1]
+    spells = e.get("spells") or []
+    flash = next((x for x in spells if x["code"] == "SummonerFlash"), None)
+    if other:
+        sp = next((x for x in spells if x is not flash), None)
+    else:
+        sp = flash or (spells[0] if spells else None)
+    if not sp:
+        return
+    t = (_live_get("gamestats") or {}).get("gameTime")
+    if t is None:
+        return
+    key = (e["name"], sp["slot"])
+    last = _spell_used.get(key)
+    if last is not None and t - last < 3:
+        del _spell_used[key]                       # 復原
+        _log(f"SPELL >> 取消標記 敵{idx} {sp['name']}")
+    else:
+        _spell_used[key] = t
+        _log(f"SPELL >> 敵{idx} {e['champion']} {sp['name']} 已使用（冷卻 {sp['cd']}s）")
+
+
 @eel.expose
 def get_hud_data() -> dict:
     """遊戲中 HUD 輪詢：合併「遊戲內即時資料」與「全場雷達掃描結果」。
@@ -1364,6 +1417,9 @@ def get_hud_data() -> dict:
             active_team = p.get("team", "")
             break
     stats = _live_get("gamestats") or {}
+    now   = stats.get("gameTime", 0)
+    if _spell_used and any(t > now + 1 for t in _spell_used.values()):
+        _spell_used.clear()                        # 遊戲時間倒退 = 新的一場
 
     rows = []
     for p in players_raw:
@@ -1372,8 +1428,20 @@ def get_hud_data() -> dict:
         champ = p.get("championName", "")
         found = scan_by_name.get(_norm_name(nm))
         cid   = (found[1].get("championId") if found else 0) or _champ_id_by_name(champ)
+        side = "my" if (not active_team or p.get("team") == active_team) else "enemy"
+        spells = []
+        if side == "enemy":
+            ss = p.get("summonerSpells") if isinstance(p.get("summonerSpells"), dict) else {}
+            for slot, k in ((1, "summonerSpellOne"), (2, "summonerSpellTwo")):
+                sp = ss.get(k) if isinstance(ss.get(k), dict) else {}
+                code = _spell_code(sp.get("rawDisplayName", ""))
+                cd   = _spell_cd(code, p.get("items"))
+                used = _spell_used.get((nm, slot))
+                rem  = max(0, round(cd - (now - used))) if (used is not None and cd) else 0
+                spells.append({"slot": slot, "code": code, "name": sp.get("displayName", ""),
+                               "cd": cd, "remaining": rem})
         rows.append({
-            "side": "my" if (not active_team or p.get("team") == active_team) else "enemy",
+            "side": side, "spells": spells,
             "name": nm, "champion": champ, "championId": cid or 0,
             "k": sc.get("kills", 0), "d": sc.get("deaths", 0), "a": sc.get("assists", 0),
             "cs": sc.get("creepScore", 0), "level": p.get("level", 0),
@@ -1381,7 +1449,12 @@ def get_hud_data() -> dict:
             "isBot": bool(p.get("isBot")),
             "scan": _brief(found[1]) if found else None,
         })
-    return {"live": True, "gameTime": round(stats.get("gameTime", 0)), "players": rows}
+    global _hud_enemies
+    enemies = [r for r in rows if r["side"] == "enemy"]
+    for i, r in enumerate(enemies, 1):
+        r["idx"] = i
+    _hud_enemies = enemies
+    return {"live": True, "gameTime": round(now), "players": rows}
 
 
 # ── HUD 視窗樣式（Windows）：置頂但不影響遊戲操作 ─────────────────────────
@@ -1461,8 +1534,14 @@ def _hud_hotkeys():
     MOD = 0x1 | 0x2 | 0x4000        # ALT | CTRL | NOREPEAT
     ok_h = u.RegisterHotKey(None, 1, MOD, 0x48)     # H
     ok_j = u.RegisterHotKey(None, 2, MOD, 0x4A)     # J
-    if not (ok_h and ok_j):
-        _log(f"HUD_HOTKEY >> 註冊失敗 H={bool(ok_h)} J={bool(ok_j)}（可能被其他程式佔用）")
+    bad = []
+    for n in range(1, 6):                           # 0x31 = '1'
+        if not u.RegisterHotKey(None, 10 + n, MOD, 0x30 + n):
+            bad.append(f"Ctrl+Alt+{n}")
+        if not u.RegisterHotKey(None, 20 + n, MOD | 0x4, 0x30 + n):    # 0x4 = SHIFT
+            bad.append(f"Ctrl+Alt+Shift+{n}")
+    if not (ok_h and ok_j) or bad:
+        _log(f"HUD_HOTKEY >> 註冊失敗 H={bool(ok_h)} J={bool(ok_j)} 其他={bad}（可能被其他程式佔用）")
     msg = wintypes.MSG()
     while u.GetMessageW(ctypes.byref(msg), None, 0, 0) != 0:
         if msg.message == 0x0312:                   # WM_HOTKEY
@@ -1474,6 +1553,10 @@ def _hud_hotkeys():
                     else:
                         _hud_state["user_hidden"] = False
                         _hud_show_noactivate()
+                elif 11 <= msg.wParam <= 15:
+                    _mark_enemy_spell(int(msg.wParam) - 10, other=False)
+                elif 21 <= msg.wParam <= 25:
+                    _mark_enemy_spell(int(msg.wParam) - 20, other=True)
                 elif msg.wParam == 2:
                     _hud_state["click_through"] = not _hud_state["click_through"]
                     _hud_apply_style(_hud_state["click_through"])
@@ -1522,6 +1605,7 @@ def _hud_watcher():
                     visible = False
                     _hud_state["user_hidden"] = False       # 下一場重新自動顯示
                     _hud_scan["my"], _hud_scan["enemy"] = [], []
+                    _spell_used.clear()
                     _log("HUD >> 遊戲結束，隱藏 HUD")
         except Exception as e:
             _log(f"HUD_WATCH_ERR >> {e}")

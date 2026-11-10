@@ -27,6 +27,18 @@ function _scanHtml(sc) {
   return `<span style="color:${_wrColor(sc.winRate)}">${sc.winRate}%</span>${badges}`;
 }
 
+function _spellChips(p) {
+  if (!p.spells || p.spells.length === 0) return '';
+  const chips = p.spells.map(sp => {
+    const nm = _esc(sp.name || '?');
+    if (sp.remaining > 0) {
+      return `<span class="hud-spell hud-spell-cd" title="${nm}：冷卻中">${nm} ${_fmtTime(sp.remaining)}</span>`;
+    }
+    return `<span class="hud-spell hud-spell-ready" title="${nm}：可用（未標記使用）">${nm}</span>`;
+  }).join('');
+  return `<div class="hud-spells">${chips}</div>`;
+}
+
 function _rowHtml(p) {
   const icon = p.championId
     ? `<img class="hud-icon" src="${CHAMP_ICON(p.championId)}" onerror="this.style.visibility='hidden'" alt="">`
@@ -36,9 +48,10 @@ function _rowHtml(p) {
     ? `${p.k}/${p.d}/${p.a}<span class="hud-cs">Lv${p.level || '-'} · ${p.cs}補</span>` : '';
   return `<div class="hud-row${p.dead ? ' dead' : ''}">
     ${icon}
-    <div class="hud-who"><div class="hud-champ">${_esc(p.champion || '')}</div><div class="hud-meta">${meta}</div></div>
+    <div class="hud-who"><div class="hud-champ">${p.idx ? `<span class="hud-idx">${p.idx}</span>` : ''}${_esc(p.champion || '')}</div><div class="hud-meta">${meta}</div></div>
     <div class="hud-kda">${kda}</div>
     <div class="hud-scan">${_scanHtml(p.scan)}</div>
+    ${_spellChips(p)}
     ${p.dead && p.respawn > 0 ? `<div class="hud-death">💀 ${p.respawn}s</div>` : ''}
   </div>`;
 }
