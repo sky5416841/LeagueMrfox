@@ -1504,6 +1504,7 @@ function on_lcu_status(data) {
 }
 
 function setStatusOnline() {
+  _lcuOnline = true;
   const st = document.getElementById('status-text');
   st.textContent = '連線正常';
   st.className   = 'text-[10px] glow-green transition-all duration-500';
@@ -1513,14 +1514,39 @@ function setStatusOnline() {
   lbl.className   = 'text-[10px] text-green-500';
 }
 
-function setStatusOffline() {
-  const st = document.getElementById('status-text');
-  st.textContent = '未連線';
-  st.className   = 'text-[10px] text-red-800 transition-all duration-500';
-  document.getElementById('status-dot').className = 'w-2 h-2 shrink-0 bg-red-900';
+// 遊戲進行中（LoL 設定為開局後關閉客戶端時，LCU 不在線是正常的，不應顯示成「離線」）
+let _inGame = false;
+let _lcuOnline = false;
+eel.expose(on_game_status);
+function on_game_status(inGame) {
+  _inGame = !!inGame;
+  if (!_lcuOnline) _renderOfflineState();
+}
+function _renderOfflineState() {
+  const st  = document.getElementById('status-text');
   const lbl = document.getElementById('status-label');
-  lbl.textContent = '離線';
-  lbl.className   = 'text-[10px] text-red-900';
+  const dot = document.getElementById('status-dot');
+  if (!st || !lbl || !dot) return;
+  if (_inGame) {
+    st.textContent  = '遊戲進行中（客戶端已關閉屬正常）';
+    st.className    = 'text-[10px] text-cyan-400 transition-all duration-500';
+    dot.className   = 'w-2 h-2 shrink-0 bg-cyan-500';
+    lbl.textContent = '遊戲中';
+    lbl.className   = 'text-[10px] text-cyan-400';
+  } else {
+    st.textContent  = '未連線';
+    st.className    = 'text-[10px] text-red-800 transition-all duration-500';
+    dot.className   = 'w-2 h-2 shrink-0 bg-red-900';
+    lbl.textContent = '離線';
+    lbl.className   = 'text-[10px] text-red-900';
+  }
+}
+
+function setStatusOffline() {
+  _lcuOnline = false;
+  _renderOfflineState();
+  // 頁面載入時若已在遊戲中，不會收到「狀態改變」推播 → 主動問一次
+  eel.is_game_running()().then(v => { _inGame = !!v; if (!_lcuOnline) _renderOfflineState(); }).catch(() => {});
 }
 
 // ── 打字機效果 ──────────────────────────────────────────────────────────

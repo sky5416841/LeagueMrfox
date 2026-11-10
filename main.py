@@ -1429,7 +1429,13 @@ def _hud_show_noactivate():
         if _hud_window:
             _hud_window.show()      # 找不到 hwnd 的退路
         return
-    _hud_apply_style(_hud_state["click_through"])
+    _hud_apply_style(_hud_state["click_through"])     # 先套 NOACTIVATE，之後顯示才不會搶焦點
+    if not _hud_state.get("inited") and _hud_window:
+        # 第一次必須走 pywebview.show()，內嵌網頁引擎才會真正載入頁面（只用 ShowWindow 會是白板）
+        _hud_window.show()
+        time.sleep(1.2)
+        _hud_state["inited"] = True
+        _hud_apply_style(_hud_state["click_through"])
     u = ctypes.windll.user32
     u.ShowWindow(hwnd, 4)           # SW_SHOWNOACTIVATE
     # HWND_TOPMOST=-1；SWP_NOSIZE|SWP_NOMOVE|SWP_NOACTIVATE = 0x1|0x2|0x10
@@ -1476,6 +1482,20 @@ def _hud_hotkeys():
                 _log(f"HUD_HOTKEY_ERR >> {e}")
 
 
+def _safe_eel_call(name: str, *args):
+    """呼叫前端函式；視窗尚未就緒或沒有該函式時靜默忽略。"""
+    try:
+        getattr(eel, name)(*args)()
+    except Exception:
+        pass
+
+
+@eel.expose
+def is_game_running() -> bool:
+    """遊戲內即時資料 API 是否有回應（= 對局進行中）。"""
+    return _live_get("gamestats") is not None
+
+
 def _hud_watcher():
     """HUD 顯示由「遊戲內即時資料 API 是否可用」決定，不依賴 LCU：
     遊戲設定為「開局後關閉客戶端」、或本程式在遊戲中才啟動時也能正常顯示。"""
@@ -1484,6 +1504,9 @@ def _hud_watcher():
     while True:
         time.sleep(2)
         up = _live_get("gamestats") is not None
+        if up != _hud_state.get("game_up"):
+            _hud_state["game_up"] = up
+            threading.Thread(target=lambda u=up: _safe_eel_call("on_game_status", u), daemon=True).start()
         try:
             if up:
                 miss = 0
