@@ -28,3 +28,12 @@ err.txt
 dist/
 build/
 scshot/
+
+# 本地建置/除錯產物
+build_log.txt
+chunk15_dump.txt
+run_app_*.log
+*.log
+translate_pipeline_check*.png
+security_tools/
+.claude/

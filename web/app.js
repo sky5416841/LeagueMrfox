@@ -307,7 +307,7 @@ function _renderLiveCard(p) {
   const champs = p.topChampions || [];
   const topChampsHtml = (noData || champs.length === 0) ? '' : `
     <div class="top-champs">
-      <span class="top-champs-label">拿手</span>
+      <span class="top-champs-label">拿手</span>${poolHtml}${pickHtml}
       ${champs.map(c => {
         const cwr = c.winRate;
         const cwrColor = cwr >= 60 ? '#4ade80' : cwr >= 50 ? '#a3e635'
@@ -319,6 +319,23 @@ function _renderLiveCard(p) {
         </div>`;
       }).join('')}
     </div>`;
+
+  // 本場英雄熟練度：以近期對局統計判斷是否本命
+  let pickHtml = '';
+  if (!noData && hasChamp && p.championId && (p.allChampions || []).length) {
+    const cur = p.allChampions.find(c => c.championId === p.championId);
+    if (!cur) {
+      pickHtml = `<span class="pick-badge pick-new" title="近期對局從未使用此英雄">⚠ 生疏</span>`;
+    } else if (cur.games >= 3 && cur.winRate >= 55) {
+      pickHtml = `<span class="pick-badge pick-main" title="${cur.games}場 · ${cur.winRate}%勝 · KDA ${cur.kda}">★ 本命 ${cur.games}場</span>`;
+    } else if (cur.games >= 3) {
+      pickHtml = `<span class="pick-badge pick-ok" title="${cur.games}場 · ${cur.winRate}%勝 · KDA ${cur.kda}">熟練 ${cur.games}場</span>`;
+    } else {
+      pickHtml = `<span class="pick-badge pick-low" title="僅 ${cur.games} 場經驗">少玩 ${cur.games}場</span>`;
+    }
+  }
+  const poolHtml = (!noData && p.poolType)
+    ? `<span class="pool-badge" title="英雄池：${p.poolSize} 隻 · 最常用佔 ${p.topShare}%">${p.poolType}</span>` : '';
 
   // 近期表現趨勢（近 5 場 W/L 方塊，綠勝紅敗）
   const rg = p.recentGames || [];
@@ -501,17 +518,22 @@ async function openPlayerModal(puuid, playerName, isAnon = false) {
       )}
     </div>`;
 
-  // ── 拿手英雄 ──
+  // ── 英雄池分析 ──
   const champs = d.champions || [];
+  const pool   = d.pool || {};
+  const poolTip = { '一招鮮': '高度集中於單一英雄', '專精': '前三名英雄佔 7 成以上',
+                    '廣泛': '英雄池很廣，熟練度較分散', '均衡': '英雄池中等' };
   const champsHtml = champs.length === 0 ? '' : `
-    <div class="pm-section-title">拿手英雄 <span class="pm-section-sub">${champs.length}</span></div>
+    <div class="pm-section-title">英雄池 <span class="pm-section-sub">${pool.poolSize || champs.length} 隻</span>
+      ${pool.poolType ? `<span class="pm-pool-badge" title="${poolTip[pool.poolType] || ''}">${pool.poolType}</span>` : ''}
+    </div>
     <div class="pm-champs">
       ${champs.slice(0, 12).map(c => `
-        <div class="pm-champ" title="${c.championName} · ${c.games}場 · ${c.winRate}%勝">
+        <div class="pm-champ" title="${c.championName} · ${c.games}場 · ${c.winRate}%勝 · KDA ${c.kda}">
           <img class="pm-champ-img" src="${IMG_PH}" ${IMG_ERR} data-champid="${c.championId}" alt="${c.championName}">
           <div class="pm-champ-info">
-            <div class="pm-champ-name">${c.championName}</div>
-            <div class="pm-champ-stat"><span style="color:${_wrColor(c.winRate)}">${c.winRate}%</span> · ${c.games}場 ${c.wins}W</div>
+            <div class="pm-champ-name">${c.championName} <span class="pm-champ-share">${c.share}%</span></div>
+            <div class="pm-champ-stat"><span style="color:${_wrColor(c.winRate)}">${c.winRate}%</span> · ${c.games}場 ${c.wins}W · KDA ${c.kda}</div>
           </div>
         </div>`).join('')}
     </div>`;

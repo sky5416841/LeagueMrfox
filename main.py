@@ -566,6 +566,80 @@ def _fetch_player_games_sgp(puuid: str, count: int = 20) -> list:
         return []
 
 
+def _fetch_games(puuid: str, count: int = 20) -> list:
+    """取玩家近 count 場原始對局（SGP 優先，LCU 備援）。"""
+    games = _fetch_player_games_sgp(puuid, count)
+    if games:
+        return games
+    try:
+        raw = _client.get(
+            f"/lol-match-history/v1/products/lol/{puuid}/matches"
+            f"?begIndex=0&endIndex={count}"
+        )
+        return raw.get("games", {}).get("games", [])
+    except Exception:
+        return []
+
+
+def _find_participant(game: dict, puuid: str) -> dict | None:
+    """在單場對局中找出指定玩家的 participant（相容 SGP 與 LCU 兩種格式）。"""
+    for p in game.get("participants", []):
+        if p.get("puuid") == puuid:
+            return p
+    for ident in game.get("participantIdentities", []):
+        if ident.get("player", {}).get("puuid") == puuid:
+            pid = ident.get("participantId")
+            return next((p for p in game.get("participants", [])
+                         if p.get("participantId") == pid), None)
+    return None
+
+
+def _add_champ_game(champ_stats: dict, ch_id: int, won: bool, k: int, d: int, a: int):
+    """累計單一英雄的場次、勝場與 KDA 總和。"""
+    cs = champ_stats.setdefault(ch_id, {"games": 0, "wins": 0, "k": 0, "d": 0, "a": 0})
+    cs["games"] += 1
+    cs["wins"]  += 1 if won else 0
+    cs["k"] += k; cs["d"] += d; cs["a"] += a
+
+
+def _rank_champions(champ_stats: dict) -> list[dict]:
+    """英雄池輸出：依場次→勝率排序，附平均 KDA 與場次佔比。"""
+    total = sum(cs["games"] for cs in champ_stats.values()) or 1
+    ranked = sorted(champ_stats.items(),
+                    key=lambda kv: (kv[1]["games"], kv[1]["wins"] / kv[1]["games"]),
+                    reverse=True)
+    return [
+        {
+            "championId":   cid,
+            "championName": _get_champ_name(cid),
+            "games":        cs["games"],
+            "wins":         cs["wins"],
+            "winRate":      round(cs["wins"] / cs["games"] * 100, 1),
+            "kda":          round((cs["k"] + cs["a"]) / max(cs["d"], 1), 2),
+            "share":        round(cs["games"] / total * 100, 1),
+        }
+        for cid, cs in ranked
+    ]
+
+
+def _pool_summary(champions: list[dict]) -> dict:
+    """依英雄池分佈判定類型：一招鮮 / 專精 / 廣泛 / 亂選。"""
+    total = sum(c["games"] for c in champions)
+    if total == 0:
+        return {"poolSize": 0, "poolType": "", "topShare": 0.0}
+    top_share = champions[0]["games"] / total * 100
+    size = len(champions)
+    if total >= 5 and top_share >= 50:
+        ptype = "一招鮮"
+    elif total >= 5 and sum(c["games"] for c in champions[:3]) / total >= 0.7:
+        ptype = "專精"
+    elif size >= max(8, total * 0.6):
+        ptype = "廣泛"
+    else:
+        ptype = "均衡"
+    return {"poolSize": size, "poolType": ptype, "topShare": round(top_share, 1)}
+
+
 def _aggregate_player_stats(puuid: str, count: int = 20) -> dict:
     """取得玩家近 count 場戰績並統計聚合數據（SGP 優先，LCU 備援）。
     回傳 wins / total / winRate / avgKills / avgDeaths / avgAssists / kda；
@@ -573,22 +647,14 @@ def _aggregate_player_stats(puuid: str, count: int = 20) -> dict:
     """
     zero = {"wins": 0, "total": 0, "winRate": 0.0,
             "avgKills": 0.0, "avgDeaths": 0.0, "avgAssists": 0.0, "kda": 0.0,
-            "topChampions": [], "streakType": "", "streakCount": 0,
+            "topChampions": [], "allChampions": [], "poolSize": 0, "poolType": "",
+            "topShare": 0.0, "streakType": "", "streakCount": 0,
             "recentGames": [], "mainPosition": "", "positionGames": 0,
             "killParticipation": 0.0, "damageShare": 0.0}
     if not puuid:
         return zero
 
-    games = _fetch_player_games_sgp(puuid, count)
-    if not games:
-        try:
-            raw   = _client.get(
-                f"/lol-match-history/v1/products/lol/{puuid}/matches"
-                f"?begIndex=0&endIndex=20"
-            )
-            games = raw.get("games", {}).get("games", [])
-        except Exception:
-            pass
+    games = _fetch_games(puuid, count)
 
     wins = kills = deaths = assists = cnt = 0
     champ_stats: dict[int, dict] = {}  # championId -> {games, wins}
@@ -599,17 +665,7 @@ def _aggregate_player_stats(puuid: str, count: int = 20) -> dict:
     for g in games:
         if g.get("gameDuration", 999) < 240:
             continue
-        pdata = None
-        for p in g.get("participants", []):
-            if p.get("puuid") == puuid:
-                pdata = p; break
-        if not pdata:
-            for ident in g.get("participantIdentities", []):
-                if ident.get("player", {}).get("puuid") == puuid:
-                    pid   = ident.get("participantId")
-                    pdata = next((p for p in g.get("participants", [])
-                                  if p.get("participantId") == pid), None)
-                    break
+        pdata = _find_participant(g, puuid)
         if not pdata:
             continue
         stats = pdata.get("stats") or pdata
@@ -652,30 +708,14 @@ def _aggregate_player_stats(puuid: str, count: int = 20) -> dict:
         # 統計每個英雄的場次與勝場（championId 在 pdata 頂層）
         ch_id = pdata.get("championId") or stats.get("championId") or 0
         if ch_id:
-            cs = champ_stats.setdefault(ch_id, {"games": 0, "wins": 0})
-            cs["games"] += 1
-            cs["wins"]  += 1 if won else 0
+            _add_champ_game(champ_stats, ch_id, won, k, d, a)
 
     if cnt > 0:
-        # 拿手英雄 Top3：≥2 場優先（先比場次再比勝率），不足 3 個再用 1 場的補滿
-        ranked = sorted(
-            champ_stats.items(),
-            key=lambda kv: (kv[1]["games"], kv[1]["wins"] / kv[1]["games"]),
-            reverse=True,
-        )
-        multi = [c for c in ranked if c[1]["games"] >= 2]
-        single = [c for c in ranked if c[1]["games"] < 2]
-        top_champs = (multi + single)[:3]
-        top_champions = [
-            {
-                "championId":   cid,
-                "championName": _get_champ_name(cid),
-                "games":        cs["games"],
-                "wins":         cs["wins"],
-                "winRate":      round(cs["wins"] / cs["games"] * 100, 1),
-            }
-            for cid, cs in top_champs
-        ]
+        # 拿手英雄 Top3：≥2 場優先（場次→勝率排序），不足 3 個再用 1 場的補滿
+        all_champs = _rank_champions(champ_stats)
+        multi  = [c for c in all_champs if c["games"] >= 2]
+        single = [c for c in all_champs if c["games"] < 2]
+        top_champions = (multi + single)[:3]
         # 連勝/連敗：從最新一場往回數，相同結果連續幾場
         streak_type = ""
         streak_count = 0
@@ -697,6 +737,8 @@ def _aggregate_player_stats(puuid: str, count: int = 20) -> dict:
             "avgAssists":   round(assists / cnt, 1),
             "kda":          round((kills + assists) / max(deaths, 1), 2),
             "topChampions": top_champions,
+            "allChampions": all_champs,
+            **_pool_summary(all_champs),
             "streakType":   streak_type,
             "streakCount":  streak_count,
             "recentGames":  recent_games[:5],
@@ -717,16 +759,7 @@ def get_player_detail(puuid: str, count: int = 20) -> dict:
     if not _client or not puuid:
         return {"ok": False}
 
-    games = _fetch_player_games_sgp(puuid, count)
-    if not games:
-        try:
-            raw   = _client.get(
-                f"/lol-match-history/v1/products/lol/{puuid}/matches"
-                f"?begIndex=0&endIndex={max(0, count - 1)}"
-            )
-            games = raw.get("games", {}).get("games", [])
-        except Exception:
-            games = []
+    games = _fetch_games(puuid, count)
 
     wins = kills = deaths = assists = cnt = 0
     champ_stats: dict[int, dict] = {}     # championId -> {games, wins}
@@ -734,17 +767,7 @@ def get_player_detail(puuid: str, count: int = 20) -> dict:
     for g in games:
         if g.get("gameDuration", 999) < 240:
             continue
-        pdata = None
-        for p in g.get("participants", []):
-            if p.get("puuid") == puuid:
-                pdata = p; break
-        if not pdata:
-            for ident in g.get("participantIdentities", []):
-                if ident.get("player", {}).get("puuid") == puuid:
-                    pid   = ident.get("participantId")
-                    pdata = next((p for p in g.get("participants", [])
-                                  if p.get("participantId") == pid), None)
-                    break
+        pdata = _find_participant(g, puuid)
         if not pdata:
             continue
         stats = pdata.get("stats") or pdata
@@ -757,9 +780,7 @@ def get_player_detail(puuid: str, count: int = 20) -> dict:
         wins    += 1 if won else 0
         kills   += k; deaths += d; assists += a
         if ch_id:
-            cs = champ_stats.setdefault(ch_id, {"games": 0, "wins": 0})
-            cs["games"] += 1
-            cs["wins"]  += 1 if won else 0
+            _add_champ_game(champ_stats, ch_id, won, k, d, a)
         recent_games.append({
             "gameId":       g.get("gameId") or 0,
             "queueId":      g.get("queueId") or 0,
@@ -772,22 +793,8 @@ def get_player_detail(puuid: str, count: int = 20) -> dict:
             "kda":          round((k + a) / max(d, 1), 2),
         })
 
-    # 完整拿手英雄列表（依場次→勝率排序）
-    ranked = sorted(
-        champ_stats.items(),
-        key=lambda kv: (kv[1]["games"], kv[1]["wins"] / kv[1]["games"]),
-        reverse=True,
-    )
-    champions = [
-        {
-            "championId":   cid,
-            "championName": _get_champ_name(cid),
-            "games":        cs["games"],
-            "wins":         cs["wins"],
-            "winRate":      round(cs["wins"] / cs["games"] * 100, 1),
-        }
-        for cid, cs in ranked
-    ]
+    # 完整英雄池（依場次→勝率排序，附 KDA / 佔比）
+    champions = _rank_champions(champ_stats)
 
     rank = {}
     try:
@@ -834,6 +841,7 @@ def get_player_detail(puuid: str, count: int = 20) -> dict:
         "avgAssists":  round(assists / cnt, 1) if cnt else 0.0,
         "kda":         round((kills + assists) / max(deaths, 1), 2) if cnt else 0.0,
         "champions":   champions,
+        "pool":        _pool_summary(champions),
         "recentGames": recent_games,
         "rank":        rank,
         "rankSolo":    dual_rank["solo"],

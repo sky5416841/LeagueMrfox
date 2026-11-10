@@ -1,4 +1,6 @@
+eel
+pywebview
 requests
+urllib3
 websockets
 psutil
-customtkinter
