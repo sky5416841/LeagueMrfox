@@ -2992,6 +2992,22 @@ def _ws_worker():
         loop.close()
 
 
+_last_pushed_ok = None  # 最近一次推播給前端的連線狀態（避免重複推播）
+
+
+def _push_status(res: dict):
+    """把連線狀態變化推給前端（僅在狀態改變時）。"""
+    global _last_pushed_ok
+    ok = bool((res or {}).get("ok"))
+    if ok == _last_pushed_ok:
+        return
+    _last_pushed_ok = ok
+    try:
+        eel.on_lcu_status(res)()
+    except Exception as e:
+        _log(f"LCU_STATUS_PUSH_ERR >> {e}")
+
+
 _last_init_ok = False   # 最近一次 initialize() 是否成功（供斷線後自動重連判斷）
 
 
@@ -3013,10 +3029,12 @@ async def _ws_listen_with_retry():
                 _log(f"WS_STREAM >> 偵測到新的客戶端連線 (port={fresh.port})，自動重新初始化")
                 res = await asyncio.get_running_loop().run_in_executor(None, initialize)
                 backoff = 2
-                if not (res or {}).get("ok"):
+                if (res or {}).get("ok"):
+                    _push_status(res)       # 讓畫面從「離線」切回已連線並刷新帳號資料
+                else:
                     _log(f"WS_STREAM >> 重新初始化未完成（客戶端可能仍在登入）: {(res or {}).get('error','')}")
         except LCUNotRunningError:
-            pass
+            _push_status({"ok": False})     # 客戶端關閉 → 畫面顯示離線
         except Exception as e:
             _log(f"WS_STREAM >> 自動重新初始化失敗: {e}")
         _log(f"WS_STREAM >> reconnecting in {backoff}s...")

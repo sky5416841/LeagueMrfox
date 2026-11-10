@@ -1444,6 +1444,13 @@ function updateUI(data) {
   loadMatchHistory();
 }
 
+// 後端偵測到客戶端斷線 / 重連時推播，更新左側連線狀態
+eel.expose(on_lcu_status);
+function on_lcu_status(data) {
+  append_log(data && data.ok ? 'LCU ▶▶ 客戶端已重新連線' : 'LCU ▶▶ 客戶端已斷線，等待重新啟動...', true);
+  updateUI(data);
+}
+
 function setStatusOnline() {
   const st = document.getElementById('status-text');
   st.textContent = '連線正常';
