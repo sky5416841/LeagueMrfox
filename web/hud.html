@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <title>遊戲中 HUD</title>
+  <script src="/eel.js"></script>
+  <link rel="stylesheet" href="hud.css?v=2">
+</head>
+<body>
+  <div id="hud-titlebar" class="pywebview-drag-region">
+    <span class="hud-title">▶▶ 遊戲中 HUD</span>
+    <span class="hud-time" id="hud-time">--:--</span>
+    <button class="hud-close" onclick="eel.hud_hide()()" title="隱藏（下一場自動顯示）">✕</button>
+  </div>
+  <div id="hud-note" class="hud-note">等待遊戲資料...</div>
+  <div id="hud-body"></div>
+  <script src="hud.js?v=1"></script>
+</body>
+</html>

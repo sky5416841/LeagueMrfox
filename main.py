@@ -58,6 +58,8 @@ _last_scanned_team_key  = ''   # 防止對同一場大廳重複掃描
 _lobby_scan_in_progress = False
 _ingame_scan_in_progress = False  # 遊戲中 10 人雷達
 _webview_window = None             # pywebview 原生視窗參考（自訂標題列控制用）
+_hud_window = None                 # 遊戲中 HUD 浮窗（只有自己看得到，進遊戲顯示）
+_hud_scan = {"my": [], "enemy": []}  # 最近一次全場雷達結果，供 HUD 合併顯示
 _overlay_window = None             # 選角戰術常駐浮窗（always-on-top，選角時顯示）
 _last_hovered_champ = 0             # 選角階段上次偵測到自己選的英雄（避免重複推播）
 _last_champsel_key  = ''           # 選角戰術推播去重鍵（雙方已選英雄集合）
@@ -1297,6 +1299,101 @@ def _build_encounters(count: int = 50) -> dict:
     return out
 
 
+_LIVE_API = "https://127.0.0.1:2999/liveclientdata"
+
+
+def _live_get(path: str):
+    """讀取遊戲內即時資料 API（僅在對局進行中開放）；失敗回傳 None。"""
+    try:
+        r = requests.get(f"{_LIVE_API}/{path}", timeout=1.0, verify=False)
+        r.raise_for_status()
+        return r.json()
+    except Exception:
+        return None
+
+
+def _champ_id_by_name(name: str) -> int:
+    """由（本地化）英雄名反查 championId，供 HUD 顯示頭像；查不到回傳 0。"""
+    if not name:
+        return 0
+    for cid, n in _champ_cache.items():
+        if n == name:
+            return cid
+    for cid, meta in _champ_meta.items():
+        if (meta.get("name") or "") == name:
+            return cid
+    return 0
+
+
+def _norm_name(n: str) -> str:
+    return (n or "").split("#")[0].strip().lower()
+
+
+@eel.expose
+def get_hud_data() -> dict:
+    """遊戲中 HUD 輪詢：合併「遊戲內即時資料」與「全場雷達掃描結果」。
+    即時資料不可用（載入畫面、非對局）時，只回傳掃描結果（live=False）。"""
+    scan_by_name = {}
+    for side, key in (("my", "my"), ("enemy", "enemy")):
+        for e in _hud_scan.get(key, []):
+            scan_by_name[_norm_name(e.get("name", ""))] = (side, e)
+
+    def _brief(e: dict) -> dict:
+        return {"winRate": e.get("winRate", 0), "kda": e.get("kda", 0), "total": e.get("total", 0),
+                "streakType": e.get("streakType", ""), "streakCount": e.get("streakCount", 0),
+                "poolType": e.get("poolType", ""), "tier": e.get("tierText", ""),
+                "encounter": e.get("encounter")}
+
+    players_raw = _live_get("playerlist")
+    if not isinstance(players_raw, list):
+        # 尚無即時資料：用掃描結果撐場面
+        rows = []
+        for side in ("my", "enemy"):
+            for e in _hud_scan.get(side, []):
+                rows.append({"side": side, "name": e.get("name", ""), "champion": e.get("championName", ""),
+                             "championId": e.get("championId", 0), "k": 0, "d": 0, "a": 0, "cs": 0,
+                             "dead": False, "respawn": 0, "level": 0, "scan": _brief(e)})
+        return {"live": False, "gameTime": 0, "players": rows}
+
+    active = _live_get("activeplayername")
+    active_team = ""
+    for p in players_raw:
+        nm = (p.get("riotIdGameName") or p.get("summonerName") or "")
+        if active and (p.get("riotId") == active or p.get("summonerName") == active
+                       or _norm_name(nm) == _norm_name(str(active))):
+            active_team = p.get("team", "")
+            break
+    stats = _live_get("gamestats") or {}
+
+    rows = []
+    for p in players_raw:
+        nm   = (p.get("riotIdGameName") or p.get("summonerName") or "").strip()
+        sc   = p.get("scores") or {}
+        champ = p.get("championName", "")
+        found = scan_by_name.get(_norm_name(nm))
+        cid   = (found[1].get("championId") if found else 0) or _champ_id_by_name(champ)
+        rows.append({
+            "side": "my" if (not active_team or p.get("team") == active_team) else "enemy",
+            "name": nm, "champion": champ, "championId": cid or 0,
+            "k": sc.get("kills", 0), "d": sc.get("deaths", 0), "a": sc.get("assists", 0),
+            "cs": sc.get("creepScore", 0), "level": p.get("level", 0),
+            "dead": bool(p.get("isDead")), "respawn": round(p.get("respawnTimer", 0) or 0),
+            "isBot": bool(p.get("isBot")),
+            "scan": _brief(found[1]) if found else None,
+        })
+    return {"live": True, "gameTime": round(stats.get("gameTime", 0)), "players": rows}
+
+
+@eel.expose
+def hud_hide():
+    """HUD 右上角關閉鈕：隱藏浮窗（下一場遊戲會再自動顯示）。"""
+    try:
+        if _hud_window:
+            _hud_window.hide()
+    except Exception as e:
+        _log(f"HUD_HIDE_ERR >> {e}")
+
+
 @eel.expose
 def get_encounter_ranking(count: int = 100, min_games: int = 3, top: int = 5) -> dict:
     """福星／剋星榜：統計近 count 場中，同隊勝率最高（福星）與對戰時我方勝率最低（剋星）的玩家。
@@ -1337,10 +1434,13 @@ def _with_progress(fn, total: int, kind: str):
             with lock:
                 state["done"] += 1
                 done = state["done"]
-            try:
-                eel.on_scan_progress(kind, done, total)()
-            except Exception:
-                pass
+            def _push():
+                try:
+                    eel.on_scan_progress(kind, done, total)()
+                except Exception:
+                    pass
+            # 另開執行緒推送：不等前端回應，避免拖慢掃描
+            threading.Thread(target=_push, daemon=True).start()
     return wrapped
 
 
@@ -1700,6 +1800,7 @@ def _scan_ingame_sync():
         _mark_premade_groups(my_team)
         _mark_premade_groups(enemy_team)
         _log(f"INGAME_SCAN >> 完成！{len(my_team)}+{len(enemy_team)} 人雷達就緒（耗時 {time.time()-_t0:.1f}s）")
+        _hud_scan["my"], _hud_scan["enemy"] = my_team, enemy_team
         try:
             eel.on_ingame_scan_ready({"myTeam": my_team, "enemyTeam": enemy_team})()
         except Exception as e:
@@ -3257,6 +3358,17 @@ def _handle_gameflow_phase(phase):
     except Exception as e:
         _log(f"OVERLAY_TOGGLE_ERR >> {e}")
 
+    # ── 遊戲中 HUD：進入遊戲顯示，離開隱藏並清空掃描快取 ──────────────────
+    try:
+        if _hud_window:
+            if phase in ("GameStart", "InProgress"):
+                _hud_window.show()
+            else:
+                _hud_window.hide()
+                _hud_scan["my"], _hud_scan["enemy"] = [], []
+    except Exception as e:
+        _log(f"HUD_TOGGLE_ERR >> {e}")
+
     # ── 嚴格 phase 路由 ──────────────────────────────────────────────────
     if phase == "ReadyCheck":
         # gameflow 進入 ReadyCheck 即直接嘗試接受（比 matchmaking WS 事件更可靠）
@@ -3534,6 +3646,23 @@ if __name__ == "__main__":
     except Exception as e:
         _overlay_window = None
         _log(f"OVERLAY_CREATE_ERR >> {e}")
+
+    # 遊戲中 HUD 浮窗：預設放螢幕右上角，進入對局才顯示
+    try:
+        try:
+            _sw = webview.screens[0].width
+        except Exception:
+            _sw = 1920
+        _hud_window = webview.create_window(
+            "LeagueMrfox 遊戲中 HUD",
+            f"http://localhost:{_EEL_PORT}/hud.html?v={_cache_bust}",
+            width=330, height=470,
+            frameless=True, on_top=True, resizable=True, hidden=True,
+            x=max(0, _sw - 350), y=90,
+        )
+    except Exception as e:
+        _hud_window = None
+        _log(f"HUD_CREATE_ERR >> {e}")
 
     try:
         webview.start()
