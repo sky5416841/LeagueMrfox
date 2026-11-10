@@ -2085,6 +2085,9 @@ def initialize():
         _restore_prefs()
         _start_ws()
 
+        # 啟動／重連時若已在選角或遊戲中，WS 不會補發事件 → 背景補掃一次
+        threading.Thread(target=lambda: (time.sleep(3), trigger_live_scan()), daemon=True).start()
+
         # 若啟動／重連時已在選角中，主動顯示戰術浮窗（WS 不會補發 phase 轉換事件）
         try:
             if _overlay_window and _client.get("/lol-gameflow/v1/gameflow-phase") == "ChampSelect":
@@ -2961,6 +2964,14 @@ def _start_ws():
     _ws_thread.start()
 
 
+# websockets 14+ 改名為 additional_headers；13.x 以下仍是 extra_headers（相容兩者）
+try:
+    _WS_HEADERS_KW = ("additional_headers"
+                      if int(websockets.__version__.split(".")[0]) >= 14 else "extra_headers")
+except Exception:
+    _WS_HEADERS_KW = "additional_headers"
+
+
 def _ws_worker():
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -3002,7 +3013,7 @@ async def _ws_listen() -> bool:
     try:
         async with websockets.connect(
             uri,
-            additional_headers={"Authorization": f"Basic {creds}"},
+            **{_WS_HEADERS_KW: {"Authorization": f"Basic {creds}"}},
             ssl=ssl_ctx,
             ping_interval=20,
             ping_timeout=10,
