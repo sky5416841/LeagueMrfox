@@ -1249,6 +1249,17 @@ def _maybe_trigger_lobby_scan(my_team: list):
     threading.Thread(target=_scan_lobby_sync, args=(list(my_team),), daemon=True).start()
 
 
+def _participant_name(p: dict) -> str:
+    """從對局 participant 盡量取出「名稱#Tag」（欄位因來源而異，找不到回傳空字串）。"""
+    name = (p.get("riotIdGameName") or p.get("gameName") or p.get("summonerName") or "").strip()
+    tag  = (p.get("riotIdTagline") or p.get("tagLine") or "").strip()
+    if not name:
+        pl = p.get("player") or {}
+        name = (pl.get("gameName") or pl.get("summonerName") or "").strip()
+        tag  = tag or (pl.get("tagLine") or "").strip()
+    return f"{name}#{tag}" if name and tag else name
+
+
 def _build_encounters(count: int = 50) -> dict:
     """掃描自己近 count 場，建立「puuid -> 同隊/對手遭遇紀錄」。
     回傳 {puuid: {"ally": {"games","wins"}, "enemy": {"games","wins"}}}；失敗回傳空字典。
@@ -1276,12 +1287,42 @@ def _build_encounters(count: int = 50) -> dict:
                 tid  = p.get("teamId") or (p.get("stats") or {}).get("teamId") or 0
                 side = "ally" if tid == my_tid else "enemy"
                 rec  = out.setdefault(pid, {"ally": {"games": 0, "wins": 0},
-                                            "enemy": {"games": 0, "wins": 0}})
+                                            "enemy": {"games": 0, "wins": 0}, "name": ""})
                 rec[side]["games"] += 1
                 rec[side]["wins"]  += 1 if won else 0
+                if not rec.get("name"):
+                    rec["name"] = _participant_name(p)
     except Exception as e:
         _log(f"ENCOUNTERS_ERR >> {e}")
     return out
+
+
+@eel.expose
+def get_encounter_ranking(count: int = 100, min_games: int = 3, top: int = 5) -> dict:
+    """福星／剋星榜：統計近 count 場中，同隊勝率最高（福星）與對戰時我方勝率最低（剋星）的玩家。
+    需至少同場 min_games 場才列入，避免樣本過少。"""
+    enc = _build_encounters(count)
+
+    def _row(pid: str, rec: dict, side: str) -> dict:
+        r = rec[side]
+        return {"puuid": pid, "name": rec.get("name", ""), "games": r["games"],
+                "wins": r["wins"], "winRate": round(r["wins"] / r["games"] * 100, 1)}
+
+    lucky   = [_row(p, r, "ally")  for p, r in enc.items() if r["ally"]["games"]  >= min_games]
+    nemesis = [_row(p, r, "enemy") for p, r in enc.items() if r["enemy"]["games"] >= max(2, min_games - 1)]  # 對手較難重複遇到，門檻少 1 場
+    lucky   = sorted([x for x in lucky   if x["winRate"] >= 50], key=lambda x: (-x["winRate"], -x["games"]))[:top]
+    nemesis = sorted([x for x in nemesis if x["winRate"] <  50], key=lambda x: ( x["winRate"], -x["games"]))[:top]
+
+    for row in lucky + nemesis:          # 名稱缺漏時用 LCU 以 puuid 補查
+        if not row["name"]:
+            try:
+                sm = _client.get(f"/lol-summoner/v2/summoners/puuid/{row['puuid']}")
+                g, t = (sm.get("gameName") or "").strip(), (sm.get("tagLine") or "").strip()
+                row["name"] = f"{g}#{t}" if g and t else g
+            except Exception:
+                pass
+        row["name"] = row["name"] or "匿名玩家"
+    return {"lucky": lucky, "nemesis": nemesis, "players": len(enc)}
 
 
 def _with_progress(fn, total: int, kind: str):

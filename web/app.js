@@ -118,6 +118,7 @@ function _renderLiveInto() {
     const leftHdr  = s.kind === 'aram' ? '// 我方' : '// 友方';
     const rightHdr = s.kind === 'aram' ? '// 敵方 [ARAM]' : '// 敵方';
     playersEl.innerHTML = `
+      ${_winPredictHtml(s.allies, s.enemies)}
       <div class="ingame-panel">
         <div class="ingame-team-col">
           <div class="ingame-team-hdr ingame-team-hdr-blue">${leftHdr}</div>
@@ -148,6 +149,29 @@ function on_scan_progress(kind, done, total) {
   statusEl.textContent = done >= total
     ? `掃描完成 · ${total} 位`
     : `${kind === 'ingame' ? '全場雷達' : '大廳'}掃描中 ${blocks} ${done}/${total}`;
+}
+
+// ── 開局勝率預測（純娛樂：依近期勝率 / KDA / 段位粗估）────────────────
+const _TIER_VAL = { IRON:0, BRONZE:1, SILVER:2, GOLD:3, PLATINUM:4, EMERALD:5, DIAMOND:6, MASTER:7, GRANDMASTER:8, CHALLENGER:9 };
+function _playerStrength(p) {
+  const tier = _TIER_VAL[String(p.tier || '').toUpperCase()];
+  return 0.5 * ((p.winRate || 50) - 50)
+       + 3   * Math.min(Math.max((p.kda || 3) - 3, -2), 3)
+       + (tier === undefined ? 0 : 1.5 * (tier - 3));
+}
+function _winPredictHtml(allies, enemies) {
+  const A = (allies  || []).filter(p => p && p.total > 0);
+  const E = (enemies || []).filter(p => p && p.total > 0);
+  if (A.length < 3 || E.length < 3) return '';
+  const mean = ps => ps.reduce((s, p) => s + _playerStrength(p), 0) / ps.length;
+  const pa = 1 / (1 + Math.exp(-(mean(A) - mean(E)) / 6));
+  const a = Math.round(pa * 100), e = 100 - a;
+  return `<div class="win-predict" title="依雙方近期勝率、KDA、段位粗估，僅供娛樂">
+    <span class="wp-side wp-ally">我方 ${a}%</span>
+    <div class="wp-bar"><div class="wp-fill" style="width:${a}%"></div></div>
+    <span class="wp-side wp-enemy">${e}% 敵方</span>
+    <span class="wp-note">娛樂預測</span>
+  </div>`;
 }
 
 // ── 隊伍摘要列（平均勝率 / KDA / 風險提示）──────────────────────────────
@@ -1177,6 +1201,7 @@ async function loadDashboard() {
       return;
     }
     renderDashboard(d);
+    loadEncounterRanking();
     if (status) status.textContent = `近 ${d.summary.games} 場`;
   } catch (e) {
     body.innerHTML = `<div class="text-[10px] text-red-400 px-2 py-10 text-center">載入失敗：${e}</div>`;
@@ -1207,6 +1232,33 @@ function _sparkline(pts, key, max, color, baseline) {
       <path d="${area}" fill="url(#${gid})"/>
       <path d="${line}" fill="none" stroke="${color}" stroke-width="1.2" vector-effect="non-scaling-stroke"/>
     </svg>`;
+}
+
+async function loadEncounterRanking() {
+  const body = document.getElementById('stats-body');
+  if (!body) return;
+  const box = document.createElement('div');
+  box.className = 'enc-rank';
+  box.innerHTML = '<div class="pm-section-title">福星 / 剋星榜 <span class="pm-section-sub">統計中...</span></div>';
+  body.appendChild(box);
+  try {
+    const r = await eel.get_encounter_ranking(100, 3, 5)();
+    const list = (rows, kind) => rows.length === 0
+      ? `<div class="enc-rank-empty">還沒有符合條件的${kind === 'lucky' ? '福星' : '剋星'}</div>`
+      : rows.map((x, i) => `<div class="enc-rank-row">
+          <span class="enc-rank-no">${i + 1}</span>
+          <span class="enc-rank-name">${x.name}</span>
+          <span class="enc-rank-stat" style="color:${_wrColor(x.winRate)}">${x.winRate}% <span class="enc-rank-sub">${x.wins}勝${x.games - x.wins}敗</span></span>
+        </div>`).join('');
+    box.innerHTML = `
+      <div class="pm-section-title">福星 / 剋星榜 <span class="pm-section-sub">近 100 場 · 福星同隊 ≥3 場 / 剋星對戰 ≥2 場</span></div>
+      <div class="enc-rank-cols">
+        <div class="enc-rank-col"><div class="enc-rank-hdr enc-lucky">🍀 福星（同隊勝率高）</div>${list(r.lucky || [], 'lucky')}</div>
+        <div class="enc-rank-col"><div class="enc-rank-hdr enc-nemesis">💀 剋星（對戰我方勝率低）</div>${list(r.nemesis || [], 'nemesis')}</div>
+      </div>`;
+  } catch (e) {
+    box.innerHTML = `<div class="enc-rank-empty">福星榜載入失敗：${e}</div>`;
+  }
 }
 
 function renderDashboard(d) {
