@@ -1331,6 +1331,7 @@ def _norm_name(n: str) -> str:
 
 # ── 敵方召喚師技能計時（遊戲 API 不提供敵方施放事件 → 靠全域快捷鍵手動標記）──────────
 # 基礎冷卻秒數（依 rawDisplayName 內含的技能代碼比對）
+SPELL_TRACKING_ENABLED = False   # 敵方召喚師技能手動計時（預設關閉；開啟後 HUD 顯示敵方編號/技能，快捷鍵 Ctrl+Alt+1~5 啟用）
 _SPELL_BASE_CD = {
     "SummonerFlash": 300, "SummonerTeleport": 360, "SummonerDot": 180, "SummonerHeal": 240,
     "SummonerBarrier": 180, "SummonerExhaust": 210, "SummonerBoost": 210, "SummonerHaste": 210,
@@ -1406,7 +1407,7 @@ def get_hud_data() -> dict:
                 rows.append({"side": side, "name": e.get("name", ""), "champion": e.get("championName", ""),
                              "championId": e.get("championId", 0), "k": 0, "d": 0, "a": 0, "cs": 0,
                              "dead": False, "respawn": 0, "level": 0, "scan": _brief(e)})
-        return {"live": False, "gameTime": 0, "players": rows}
+        return {"live": False, "gameTime": 0, "players": rows, "spellTracking": SPELL_TRACKING_ENABLED}
 
     active = _live_get("activeplayername")
     active_team = ""
@@ -1430,7 +1431,7 @@ def get_hud_data() -> dict:
         cid   = (found[1].get("championId") if found else 0) or _champ_id_by_name(champ)
         side = "my" if (not active_team or p.get("team") == active_team) else "enemy"
         spells = []
-        if side == "enemy":
+        if side == "enemy" and SPELL_TRACKING_ENABLED:
             ss = p.get("summonerSpells") if isinstance(p.get("summonerSpells"), dict) else {}
             for slot, k in ((1, "summonerSpellOne"), (2, "summonerSpellTwo")):
                 sp = ss.get(k) if isinstance(ss.get(k), dict) else {}
@@ -1451,10 +1452,11 @@ def get_hud_data() -> dict:
         })
     global _hud_enemies
     enemies = [r for r in rows if r["side"] == "enemy"]
-    for i, r in enumerate(enemies, 1):
-        r["idx"] = i
+    if SPELL_TRACKING_ENABLED:
+        for i, r in enumerate(enemies, 1):
+            r["idx"] = i
     _hud_enemies = enemies
-    return {"live": True, "gameTime": round(now), "players": rows}
+    return {"live": True, "gameTime": round(now), "players": rows, "spellTracking": SPELL_TRACKING_ENABLED}
 
 
 # ── HUD 視窗樣式（Windows）：置頂但不影響遊戲操作 ─────────────────────────
@@ -1566,6 +1568,8 @@ def _hud_hotkeys():
     bad = []
     table = [(1, MOD, 0x48, "H"), (2, MOD, 0x4A, "J")]
     for n in range(1, 6):
+        if not SPELL_TRACKING_ENABLED:
+            break
         table.append((10 + n, MOD, 0x30 + n, f"{n}"))
         table.append((20 + n, MOD | 0x4, 0x30 + n, f"Shift+{n}"))
     for aid, mod, vk, nm in table:
@@ -1586,7 +1590,8 @@ def _hud_key_poll():
     gk = ctypes.windll.user32.GetAsyncKeyState
     keys = {0x48: 1, 0x4A: 2}
     for n in range(1, 6):
-        keys[0x30 + n] = n
+        if SPELL_TRACKING_ENABLED:
+            keys[0x30 + n] = n
     prev = set()
     logged = False
     while True:

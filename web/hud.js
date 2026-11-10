@@ -60,6 +60,9 @@ function _render(d) {
   const body = document.getElementById('hud-body');
   const note = document.getElementById('hud-note');
   document.getElementById('hud-time').textContent = d.live ? _fmtTime(d.gameTime) : '--:--';
+  document.querySelector('.hud-keys').textContent = d.spellTracking
+    ? 'Ctrl+Alt+H 隱藏 · J 移動 · 1~5 敵方閃現 · +Shift 另一招'
+    : 'Ctrl+Alt+H 隱藏 · Ctrl+Alt+J 移動模式';
   note.textContent = d.live ? '' : '載入中 · 僅顯示雷達資料（遊戲開始後加入即時戰況）';
   if (!d.players || d.players.length === 0) { body.innerHTML = ''; note.textContent = '等待遊戲資料...'; return; }
   const sec = (side, label, cls) => {
