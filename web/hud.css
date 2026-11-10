@@ -59,3 +59,11 @@ body {
 .hud-spell { font-size:9px; padding:0 5px; border-radius:3px; border:1px solid; }
 .hud-spell-ready { color:#64748b; border-color:rgba(100,116,139,.35); }
 .hud-spell-cd { color:#fbbf24; border-color:rgba(251,191,36,.55); background:rgba(251,191,36,.1); font-weight:700; }
+
+.hud-team-obj { color:#fbbf24; }
+.hud-objs { display:flex; flex-wrap:wrap; gap:4px; padding:2px 0 4px; }
+.hud-obj { font-size:10px; padding:1px 6px; border-radius:3px; border:1px solid rgba(251,191,36,.45);
+  color:#fbbf24; background:rgba(251,191,36,.08); }
+.hud-obj-baron { color:#c084fc; border-color:rgba(192,132,252,.5); background:rgba(192,132,252,.08); }
+.hud-obj-inhib { color:#94a3b8; border-color:rgba(148,163,184,.4); background:rgba(148,163,184,.06); }
+.hud-obj.soon { font-weight:700; box-shadow:0 0 6px rgba(251,191,36,.45); }

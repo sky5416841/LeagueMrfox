@@ -1383,6 +1383,53 @@ def _mark_enemy_spell(idx: int, other: bool):
         _log(f"SPELL >> 敵{idx} {e['champion']} {sp['name']} 已使用（冷卻 {sp['cd']}s）")
 
 
+# ── 目標重生計時（來自遊戲內事件 API 的擊殺事件；只用「擊殺後重生」這類穩定規則）──
+_DRAGON_RESPAWN = 300      # 小龍被擊殺後 5 分鐘重生
+_ELDER_RESPAWN  = 360      # 遠古龍 6 分鐘
+_BARON_RESPAWN  = 360      # 男爵 6 分鐘
+_INHIB_RESPAWN  = 300      # 水晶被摧毀後 5 分鐘重生
+_LANE_NAME = {"L": "上路", "C": "中路", "R": "下路"}   # Barracks_T1_L1 的 L/C/R
+
+
+def _compute_objectives(events: list, now: float, my_team: str) -> list:
+    """由事件列表算出各目標的重生倒數。回傳 [{key,label,remaining,side}]，只含倒數中的項目。"""
+    out = []
+    last_dragon = last_baron = None
+    inhibs = {}
+    for e in events or []:
+        if not isinstance(e, dict):
+            continue
+        name, t = e.get("EventName"), e.get("EventTime")
+        if not isinstance(t, (int, float)):
+            continue
+        if name == "DragonKill":
+            last_dragon = e
+        elif name == "BaronKill":
+            last_baron = e
+        elif name == "InhibKilled":
+            inhibs[str(e.get("InhibKilled", ""))] = t        # 同一水晶以最新一次為準
+    if last_dragon:
+        cd = _ELDER_RESPAWN if last_dragon.get("DragonType") == "Elder" else _DRAGON_RESPAWN
+        rem = round(cd - (now - last_dragon["EventTime"]))
+        if rem > 0:
+            out.append({"key": "dragon", "label": "遠古龍" if cd == _ELDER_RESPAWN else "小龍", "remaining": rem, "side": ""})
+    if last_baron:
+        rem = round(_BARON_RESPAWN - (now - last_baron["EventTime"]))
+        if rem > 0:
+            out.append({"key": "baron", "label": "男爵", "remaining": rem, "side": ""})
+    for nm, t in inhibs.items():
+        rem = round(_INHIB_RESPAWN - (now - t))
+        if rem <= 0:
+            continue
+        parts = nm.split("_")                                  # Barracks_T1_L1
+        team_tag = parts[1] if len(parts) > 1 else ""
+        lane = _LANE_NAME.get(parts[2][:1], "") if len(parts) > 2 else ""
+        mine = (team_tag == "T1") == (my_team in ("", "ORDER"))   # T1 = 藍方(ORDER)
+        out.append({"key": "inhib", "label": f"{'我方' if mine else '敵方'}{lane}水晶", "remaining": rem,
+                    "side": "my" if mine else "enemy"})
+    return out
+
+
 @eel.expose
 def get_hud_data() -> dict:
     """遊戲中 HUD 輪詢：合併「遊戲內即時資料」與「全場雷達掃描結果」。
@@ -1419,6 +1466,8 @@ def get_hud_data() -> dict:
             break
     stats = _live_get("gamestats") or {}
     now   = stats.get("gameTime", 0)
+    ev    = (_live_get("eventdata") or {}).get("Events", [])
+    objectives = _compute_objectives(ev, now, active_team)
     if _spell_used and any(t > now + 1 for t in _spell_used.values()):
         _spell_used.clear()                        # 遊戲時間倒退 = 新的一場
 
@@ -1456,7 +1505,8 @@ def get_hud_data() -> dict:
         for i, r in enumerate(enemies, 1):
             r["idx"] = i
     _hud_enemies = enemies
-    return {"live": True, "gameTime": round(now), "players": rows, "spellTracking": SPELL_TRACKING_ENABLED}
+    return {"live": True, "gameTime": round(now), "players": rows, "spellTracking": SPELL_TRACKING_ENABLED,
+            "objectives": objectives}
 
 
 # ── HUD 視窗樣式（Windows）：置頂但不影響遊戲操作 ─────────────────────────
