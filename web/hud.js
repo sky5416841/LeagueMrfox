@@ -56,11 +56,22 @@ function _render(d) {
   body.innerHTML = sec('my', '我方', 'hud-team-my') + sec('enemy', '敵方', 'hud-team-enemy');
 }
 
+// 依內容自動調整視窗高度（變化超過 8px 才通知後端，避免頻繁縮放）
+let _lastH = 0;
+function _fitHeight() {
+  const body = document.getElementById('hud-body');
+  const h = Math.ceil(
+    document.getElementById('hud-titlebar').offsetHeight +
+    document.getElementById('hud-note').offsetHeight +
+    Array.from(body.children).reduce((s, c) => s + c.offsetHeight + 3, 0) + 18);
+  if (Math.abs(h - _lastH) > 8) { _lastH = h; eel.hud_resize(h); }
+}
+
 let _busy = false;
 async function _tick() {
   if (_busy) return;
   _busy = true;
-  try { _render(await eel.get_hud_data()()); } catch (e) { /* 後端尚未就緒，下一秒再試 */ }
+  try { _render(await eel.get_hud_data()()); _fitHeight(); } catch (e) { /* 後端尚未就緒，下一秒再試 */ }
   _busy = false;
 }
 setInterval(_tick, 1000);

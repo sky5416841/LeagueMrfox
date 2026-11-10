@@ -1384,6 +1384,42 @@ def get_hud_data() -> dict:
     return {"live": True, "gameTime": round(stats.get("gameTime", 0)), "players": rows}
 
 
+def _hud_watcher():
+    """HUD 顯示由「遊戲內即時資料 API 是否可用」決定，不依賴 LCU：
+    遊戲設定為「開局後關閉客戶端」、或本程式在遊戲中才啟動時也能正常顯示。"""
+    visible = False
+    miss = 0
+    while True:
+        time.sleep(2)
+        up = _live_get("gamestats") is not None
+        try:
+            if up:
+                miss = 0
+                if not visible and _hud_window:
+                    _hud_window.show()
+                    visible = True
+                    _log("HUD >> 偵測到遊戲進行中，顯示 HUD")
+            else:
+                miss += 1
+                if visible and miss >= 5 and _hud_window:   # 連續 10 秒沒資料才視為遊戲結束
+                    _hud_window.hide()
+                    visible = False
+                    _hud_scan["my"], _hud_scan["enemy"] = [], []
+                    _log("HUD >> 遊戲結束，隱藏 HUD")
+        except Exception as e:
+            _log(f"HUD_WATCH_ERR >> {e}")
+
+
+@eel.expose
+def hud_resize(height: int):
+    """HUD 依內容高度自動縮放（避免下方空白擋住遊戲畫面）。"""
+    try:
+        if _hud_window:
+            _hud_window.resize(330, max(90, min(int(height), 700)))
+    except Exception as e:
+        _log(f"HUD_RESIZE_ERR >> {e}")
+
+
 @eel.expose
 def hud_hide():
     """HUD 右上角關閉鈕：隱藏浮窗（下一場遊戲會再自動顯示）。"""
@@ -2237,7 +2273,10 @@ def _initialize_impl():
         _start_ws()
 
         # 啟動／重連時若已在選角或遊戲中，WS 不會補發事件 → 背景補掃一次
-        threading.Thread(target=lambda: (time.sleep(3), trigger_live_scan()), daemon=True).start()
+        def _catch_up():
+            time.sleep(3)
+            trigger_live_scan()
+        threading.Thread(target=_catch_up, daemon=True).start()
 
         # 若啟動／重連時已在選角中，主動顯示戰術浮窗（WS 不會補發 phase 轉換事件）
         try:
@@ -3359,15 +3398,8 @@ def _handle_gameflow_phase(phase):
         _log(f"OVERLAY_TOGGLE_ERR >> {e}")
 
     # ── 遊戲中 HUD：進入遊戲顯示，離開隱藏並清空掃描快取 ──────────────────
-    try:
-        if _hud_window:
-            if phase in ("GameStart", "InProgress"):
-                _hud_window.show()
-            else:
-                _hud_window.hide()
-                _hud_scan["my"], _hud_scan["enemy"] = [], []
-    except Exception as e:
-        _log(f"HUD_TOGGLE_ERR >> {e}")
+    if phase not in ("GameStart", "InProgress", "Reconnect"):
+        _hud_scan["my"], _hud_scan["enemy"] = [], []   # 離開遊戲：清空雷達快取（視窗顯示由 _hud_watcher 決定）
 
     # ── 嚴格 phase 路由 ──────────────────────────────────────────────────
     if phase == "ReadyCheck":
@@ -3663,6 +3695,9 @@ if __name__ == "__main__":
     except Exception as e:
         _hud_window = None
         _log(f"HUD_CREATE_ERR >> {e}")
+
+    if _hud_window:
+        threading.Thread(target=_hud_watcher, daemon=True).start()
 
     try:
         webview.start()
