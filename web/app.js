@@ -160,7 +160,7 @@ function _teamSummaryHtml(players) {
   const otp   = ps.filter(p => p.poolType === '一招鮮').length;
   const tilt  = ps.filter(p => p.streakType === 'lose' && p.streakCount >= 3).length;
   const hot   = ps.filter(p => p.streakType === 'win'  && p.streakCount >= 3).length;
-  const green = ps.filter(p => (p.allChampions || []).length && p.championId > 0 &&
+  const green = ps.filter(p => !p.randomPick && (p.allChampions || []).length && p.championId > 0 &&
                                !p.allChampions.some(c => c.championId === p.championId)).length;
   const chip = (txt, cls, tip) => `<span class="ts-chip ${cls}" title="${tip}">${txt}</span>`;
   return `<div class="team-summary">
@@ -341,7 +341,7 @@ function _renderLiveCard(p) {
 
   // 本場英雄熟練度：以近期對局統計判斷是否本命
   let pickHtml = '';
-  if (!noData && hasChamp && p.championId && (p.allChampions || []).length) {
+  if (!noData && !p.randomPick && hasChamp && p.championId && (p.allChampions || []).length) {
     const cur = p.allChampions.find(c => c.championId === p.championId);
     if (!cur) {
       pickHtml = `<span class="pick-badge pick-new" title="近期對局從未使用此英雄">⚠ 生疏</span>`;
@@ -353,7 +353,7 @@ function _renderLiveCard(p) {
       pickHtml = `<span class="pick-badge pick-low" title="僅 ${cur.games} 場經驗">少玩 ${cur.games}場</span>`;
     }
   }
-  const poolHtml = (!noData && p.poolType)
+  const poolHtml = (!noData && !p.randomPick && p.poolType)
     ? `<span class="pool-badge" title="英雄池：${p.poolSize} 隻 · 最常用佔 ${p.topShare}%">${p.poolType}</span>` : '';
 
   // 拿手英雄 Top3

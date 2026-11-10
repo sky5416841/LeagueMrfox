@@ -1381,6 +1381,7 @@ def _scan_lobby_sync(my_team: list):
 
             entry["puuid"] = puuid
             entry["tagInfo"] = _get_tag(puuid)
+            entry["randomPick"] = _current_lobby_mode in ("aram", "kiwi", "arena")  # 隨機選角模式不顯示熟練度標籤
             if not is_self:
                 entry["encounter"] = encounters.get(puuid)
             return entry
@@ -1643,6 +1644,7 @@ def _scan_ingame_sync():
                     _log(f"INGAME_SCAN >> 段位失敗 {puuid[:8]}: {e}")
 
             entry["tagInfo"] = _get_tag(puuid)
+            entry["randomPick"] = _current_lobby_mode in ("aram", "kiwi", "arena")  # 隨機選角模式不顯示熟練度標籤
             if puuid != _puuid:
                 entry["encounter"] = encounters.get(puuid)
             return entry
@@ -2023,6 +2025,13 @@ _init_in_progress = False
 
 @eel.expose
 def initialize():
+    global _last_init_ok
+    res = _initialize_impl()
+    _last_init_ok = bool((res or {}).get("ok"))
+    return res
+
+
+def _initialize_impl():
     global _client, _puuid, _account_id, _platform_id, _entitlement_token, _league_session_token
     global _init_in_progress
     # 重入防護：避免前端 load 與 reconnect 同時觸發造成重複初始化
@@ -2983,6 +2992,9 @@ def _ws_worker():
         loop.close()
 
 
+_last_init_ok = False   # 最近一次 initialize() 是否成功（供斷線後自動重連判斷）
+
+
 async def _ws_listen_with_retry():
     backoff = 5
     while not _ws_stop.is_set():
@@ -2992,7 +3004,21 @@ async def _ws_listen_with_retry():
         if connected:
             backoff = 5   # reset on clean disconnect
         else:
-            backoff = min(backoff * 2, 60)
+            backoff = min(backoff * 2, 20)
+        # 客戶端重開後 port/密碼會變：偵測到憑證改變就自動重新初始化（免手動按重新連線）
+        try:
+            fresh = LCUClient()
+            if (_client is None or not _last_init_ok
+                    or (fresh.port, fresh.password) != (_client.port, _client.password)):
+                _log(f"WS_STREAM >> 偵測到新的客戶端連線 (port={fresh.port})，自動重新初始化")
+                res = await asyncio.get_running_loop().run_in_executor(None, initialize)
+                backoff = 2
+                if not (res or {}).get("ok"):
+                    _log(f"WS_STREAM >> 重新初始化未完成（客戶端可能仍在登入）: {(res or {}).get('error','')}")
+        except LCUNotRunningError:
+            pass
+        except Exception as e:
+            _log(f"WS_STREAM >> 自動重新初始化失敗: {e}")
         _log(f"WS_STREAM >> reconnecting in {backoff}s...")
         for _ in range(backoff * 2):
             if _ws_stop.is_set():
