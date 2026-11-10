@@ -346,6 +346,16 @@ function _renderLiveCard(p) {
           title="${g.win ? '勝' : '負'} · ${g.k}/${g.d}/${g.a} · KDA ${g.kda}">${g.win ? 'W' : 'L'}</span>`).join('')}
     </div>`;
 
+  // 與我的歷史遭遇（近 50 場內同隊 / 對手紀錄）
+  const enc = p.encounter;
+  let encHtml = '';
+  if (enc && !isSelf) {
+    const part = (label, r) => r.games
+      ? `<span class="enc-part" title="${label} ${r.games} 場，我方 ${r.wins} 勝">${label} ${r.games}場 <span style="color:${r.wins * 2 >= r.games ? '#4ade80' : '#f87171'}">${r.wins}W${r.games - r.wins}L</span></span>` : '';
+    const inner = part('同隊', enc.ally) + part('對手', enc.enemy);
+    if (inner) encHtml = `<div class="enc-row"><span class="enc-label">遇過</span>${inner}</div>`;
+  }
+
   const selfClass  = isSelf  ? ' live-card-self'  : '';
   const enemyClass = isEnemy ? ' live-card-enemy' : '';
   // 可點擊查看個人頁（需有 puuid）
@@ -371,6 +381,7 @@ function _renderLiveCard(p) {
           ${rankHtml}
           ${statsHtml}
           ${(topChampsHtml || trendHtml) ? `<div class="card-extra-row">${topChampsHtml}${trendHtml}</div>` : ''}
+          ${encHtml}
         </div>
       </div>
     </div>`;

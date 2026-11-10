@@ -1249,11 +1249,48 @@ def _maybe_trigger_lobby_scan(my_team: list):
     threading.Thread(target=_scan_lobby_sync, args=(list(my_team),), daemon=True).start()
 
 
+def _build_encounters(count: int = 50) -> dict:
+    """掃描自己近 count 場，建立「puuid -> 同隊/對手遭遇紀錄」。
+    回傳 {puuid: {"ally": {"games","wins"}, "enemy": {"games","wins"}}}；失敗回傳空字典。
+    每次掃描只呼叫一次，再由各玩家查表，避免重複抓戰績。
+    """
+    out: dict[str, dict] = {}
+    if not _puuid:
+        return out
+    try:
+        for g in _fetch_games(_puuid, count):
+            if g.get("gameDuration", 999) < 240:
+                continue
+            me = _find_participant(g, _puuid)
+            if not me:
+                continue
+            my_stats = me.get("stats") or me
+            if my_stats.get("win") is None:
+                continue
+            won    = bool(my_stats.get("win"))
+            my_tid = me.get("teamId") or my_stats.get("teamId") or 0
+            for p in g.get("participants", []):
+                pid = p.get("puuid") or ""
+                if not pid or pid == _puuid or pid == _EMPTY_PUUID:
+                    continue
+                tid  = p.get("teamId") or (p.get("stats") or {}).get("teamId") or 0
+                side = "ally" if tid == my_tid else "enemy"
+                rec  = out.setdefault(pid, {"ally": {"games": 0, "wins": 0},
+                                            "enemy": {"games": 0, "wins": 0}})
+                rec[side]["games"] += 1
+                rec[side]["wins"]  += 1 if won else 0
+    except Exception as e:
+        _log(f"ENCOUNTERS_ERR >> {e}")
+    return out
+
+
 def _scan_lobby_sync(my_team: list):
     """背景執行緒：逐一取得隊友召喚師名稱與近 20 場戰績，完成後推播至前端。"""
     global _lobby_scan_in_progress
     try:
         _log(f"LOBBY_SCAN >> 開始掃描 {len(my_team)} 位成員...")
+
+        encounters = _build_encounters()
 
         def _scan_lobby_one(player: dict) -> dict:
             sid        = player.get("summonerId", 0)
@@ -1325,6 +1362,8 @@ def _scan_lobby_sync(my_team: list):
 
             entry["puuid"] = puuid
             entry["tagInfo"] = _get_tag(puuid)
+            if not is_self:
+                entry["encounter"] = encounters.get(puuid)
             return entry
 
         _t0 = time.time()
@@ -1496,6 +1535,8 @@ def _scan_ingame_sync():
 
         _log(f"INGAME_SCAN >> 我方 {len(my_raw)} + 敵方 {len(enemy_raw)}")
 
+        encounters = _build_encounters()
+
         def _scan_one(p: dict) -> dict:
             puuid    = p.get("puuid", "") or ""
             if puuid == _EMPTY_PUUID:
@@ -1583,6 +1624,8 @@ def _scan_ingame_sync():
                     _log(f"INGAME_SCAN >> 段位失敗 {puuid[:8]}: {e}")
 
             entry["tagInfo"] = _get_tag(puuid)
+            if puuid != _puuid:
+                entry["encounter"] = encounters.get(puuid)
             return entry
 
         # 並行查詢全場 10 人（每人查戰績+段位，序列太慢）
