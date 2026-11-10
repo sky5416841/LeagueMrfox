@@ -1430,6 +1430,21 @@ def _compute_objectives(events: list, now: float, my_team: str) -> list:
     return out
 
 
+_obj_seen: set = set()
+
+
+def _log_objective_events(events):
+    """把龍/男爵/水晶事件原始內容寫進 debug.log（每筆只記一次），供賽後核對計時是否正確。"""
+    for e in events or []:
+        if not isinstance(e, dict) or e.get("EventName") not in ("DragonKill", "BaronKill", "InhibKilled", "InhibRespawned", "HeraldKill", "HordeKill"):
+            continue
+        key = (e.get("EventName"), e.get("EventTime"), e.get("InhibKilled"), e.get("DragonType"))
+        if key in _obj_seen:
+            continue
+        _obj_seen.add(key)
+        _log(f"OBJ_EVENT >> {json.dumps(e, ensure_ascii=False)}")
+
+
 @eel.expose
 def get_hud_data() -> dict:
     """遊戲中 HUD 輪詢：合併「遊戲內即時資料」與「全場雷達掃描結果」。
@@ -1467,7 +1482,12 @@ def get_hud_data() -> dict:
     stats = _live_get("gamestats") or {}
     now   = stats.get("gameTime", 0)
     ev    = (_live_get("eventdata") or {}).get("Events", [])
-    objectives = _compute_objectives(ev, now, active_team)
+    _log_objective_events(ev)
+    try:
+        objectives = _compute_objectives(ev, now, active_team)
+    except Exception as e:
+        objectives = []
+        _log(f"OBJ_ERR >> {e}")
     if _spell_used and any(t > now + 1 for t in _spell_used.values()):
         _spell_used.clear()                        # 遊戲時間倒退 = 新的一場
 

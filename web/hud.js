@@ -73,7 +73,7 @@ function _render(d) {
   const objHtml = objs.length ? `<div class="hud-team-hdr hud-team-obj">// 目標重生</div><div class="hud-objs">${
     objs.map(o => `<span class="hud-obj hud-obj-${o.key}${o.remaining <= 30 ? ' soon' : ''}" title="${_esc(o.label)} ${_fmtTime(o.remaining)} 後重生">${_esc(o.label)} ${_fmtTime(o.remaining)}</span>`).join('')
   }</div>` : '';
-  body.innerHTML = sec('my', '我方', 'hud-team-my') + sec('enemy', '敵方', 'hud-team-enemy') + objHtml;
+  body.innerHTML = objHtml + sec('my', '我方', 'hud-team-my') + sec('enemy', '敵方', 'hud-team-enemy');
 }
 
 // 依內容自動調整視窗高度（變化超過 8px 才通知後端，避免頻繁縮放）
