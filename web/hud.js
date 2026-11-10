@@ -63,6 +63,7 @@ function _fitHeight() {
   const h = Math.ceil(
     document.getElementById('hud-titlebar').offsetHeight +
     document.getElementById('hud-note').offsetHeight +
+    document.querySelector('.hud-keys').offsetHeight +
     Array.from(body.children).reduce((s, c) => s + c.offsetHeight + 3, 0) + 18);
   if (Math.abs(h - _lastH) > 8) { _lastH = h; eel.hud_resize(h); }
 }

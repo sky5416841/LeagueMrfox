@@ -1384,6 +1384,98 @@ def get_hud_data() -> dict:
     return {"live": True, "gameTime": round(stats.get("gameTime", 0)), "players": rows}
 
 
+# ── HUD 視窗樣式（Windows）：置頂但不影響遊戲操作 ─────────────────────────
+_HUD_TITLE = "LeagueMrfox 遊戲中 HUD"
+_hud_state = {"click_through": True, "user_hidden": False, "visible": False}
+_HUD_ALPHA = 225        # 0~255，約 88% 不透明
+
+
+def _hud_hwnd():
+    try:
+        import ctypes
+        return ctypes.windll.user32.FindWindowW(None, _HUD_TITLE) or 0
+    except Exception:
+        return 0
+
+
+def _hud_apply_style(click_through: bool):
+    """套用視窗樣式：分層半透明 + 工具視窗(不進工作列) + 不取得焦點 + 可選的點擊穿透。"""
+    import ctypes
+    from ctypes import wintypes
+    hwnd = _hud_hwnd()
+    if not hwnd:
+        return False
+    u = ctypes.windll.user32
+    u.GetWindowLongPtrW.restype = ctypes.c_ssize_t
+    u.GetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int]
+    u.SetWindowLongPtrW.restype = ctypes.c_ssize_t
+    u.SetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
+    GWL_EXSTYLE = -20
+    WS_EX_TRANSPARENT, WS_EX_LAYERED = 0x20, 0x80000
+    WS_EX_TOOLWINDOW, WS_EX_NOACTIVATE = 0x80, 0x08000000
+    ex = u.GetWindowLongPtrW(hwnd, GWL_EXSTYLE)
+    ex |= WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE
+    ex = (ex | WS_EX_TRANSPARENT) if click_through else (ex & ~WS_EX_TRANSPARENT)
+    u.SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex)
+    u.SetLayeredWindowAttributes(hwnd, 0, _HUD_ALPHA, 0x2)   # LWA_ALPHA
+    return True
+
+
+def _hud_show_noactivate():
+    """顯示並置頂，但不搶走遊戲焦點（不使用 pywebview.show()，它會啟用視窗）。"""
+    import ctypes
+    hwnd = _hud_hwnd()
+    if not hwnd:
+        if _hud_window:
+            _hud_window.show()      # 找不到 hwnd 的退路
+        return
+    _hud_apply_style(_hud_state["click_through"])
+    u = ctypes.windll.user32
+    u.ShowWindow(hwnd, 4)           # SW_SHOWNOACTIVATE
+    # HWND_TOPMOST=-1；SWP_NOSIZE|SWP_NOMOVE|SWP_NOACTIVATE = 0x1|0x2|0x10
+    u.SetWindowPos(hwnd, -1, 0, 0, 0, 0, 0x13)
+    _hud_state["visible"] = True
+
+
+def _hud_hide_native():
+    import ctypes
+    hwnd = _hud_hwnd()
+    if hwnd:
+        ctypes.windll.user32.ShowWindow(hwnd, 0)    # SW_HIDE
+    elif _hud_window:
+        _hud_window.hide()
+    _hud_state["visible"] = False
+
+
+def _hud_hotkeys():
+    """全域快捷鍵：Ctrl+Alt+H 顯示/隱藏 HUD；Ctrl+Alt+J 切換「點擊穿透 / 可拖動」。"""
+    import ctypes
+    from ctypes import wintypes
+    u = ctypes.windll.user32
+    MOD = 0x1 | 0x2 | 0x4000        # ALT | CTRL | NOREPEAT
+    ok_h = u.RegisterHotKey(None, 1, MOD, 0x48)     # H
+    ok_j = u.RegisterHotKey(None, 2, MOD, 0x4A)     # J
+    if not (ok_h and ok_j):
+        _log(f"HUD_HOTKEY >> 註冊失敗 H={bool(ok_h)} J={bool(ok_j)}（可能被其他程式佔用）")
+    msg = wintypes.MSG()
+    while u.GetMessageW(ctypes.byref(msg), None, 0, 0) != 0:
+        if msg.message == 0x0312:                   # WM_HOTKEY
+            try:
+                if msg.wParam == 1:
+                    if _hud_state["visible"]:
+                        _hud_state["user_hidden"] = True
+                        _hud_hide_native()
+                    else:
+                        _hud_state["user_hidden"] = False
+                        _hud_show_noactivate()
+                elif msg.wParam == 2:
+                    _hud_state["click_through"] = not _hud_state["click_through"]
+                    _hud_apply_style(_hud_state["click_through"])
+                    _log(f"HUD >> {'點擊穿透（不影響遊戲操作）' if _hud_state['click_through'] else '可拖動模式'}")
+            except Exception as e:
+                _log(f"HUD_HOTKEY_ERR >> {e}")
+
+
 def _hud_watcher():
     """HUD 顯示由「遊戲內即時資料 API 是否可用」決定，不依賴 LCU：
     遊戲設定為「開局後關閉客戶端」、或本程式在遊戲中才啟動時也能正常顯示。"""
@@ -1396,14 +1488,16 @@ def _hud_watcher():
             if up:
                 miss = 0
                 if not visible and _hud_window:
-                    _hud_window.show()
                     visible = True
-                    _log("HUD >> 偵測到遊戲進行中，顯示 HUD")
+                    if not _hud_state["user_hidden"]:
+                        _hud_show_noactivate()
+                        _log("HUD >> 偵測到遊戲進行中，顯示 HUD（置頂、點擊穿透）")
             else:
                 miss += 1
                 if visible and miss >= 5 and _hud_window:   # 連續 10 秒沒資料才視為遊戲結束
-                    _hud_window.hide()
+                    _hud_hide_native()
                     visible = False
+                    _hud_state["user_hidden"] = False       # 下一場重新自動顯示
                     _hud_scan["my"], _hud_scan["enemy"] = [], []
                     _log("HUD >> 遊戲結束，隱藏 HUD")
         except Exception as e:
@@ -1424,8 +1518,8 @@ def hud_resize(height: int):
 def hud_hide():
     """HUD 右上角關閉鈕：隱藏浮窗（下一場遊戲會再自動顯示）。"""
     try:
-        if _hud_window:
-            _hud_window.hide()
+        _hud_state["user_hidden"] = True
+        _hud_hide_native()
     except Exception as e:
         _log(f"HUD_HIDE_ERR >> {e}")
 
@@ -3698,6 +3792,7 @@ if __name__ == "__main__":
 
     if _hud_window:
         threading.Thread(target=_hud_watcher, daemon=True).start()
+        threading.Thread(target=_hud_hotkeys, daemon=True).start()
 
     try:
         webview.start()
