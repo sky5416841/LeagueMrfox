@@ -1526,43 +1526,94 @@ def _hud_hide_native():
     _hud_state["visible"] = False
 
 
+_hotkey_last: dict = {}
+
+
+def _hotkey_action(action: int):
+    """統一處理快捷鍵動作（RegisterHotKey 與按鍵輪詢兩條路徑共用，0.4 秒內重複觸發視為同一次）。
+    1=顯示/隱藏 2=點擊穿透切換 11~15=敵方閃現 21~25=敵方另一招"""
+    now = time.time()
+    if now - _hotkey_last.get(action, 0) < 0.4:
+        return
+    _hotkey_last[action] = now
+    try:
+        if action == 1:
+            if _hud_state["visible"]:
+                _hud_state["user_hidden"] = True
+                _hud_hide_native()
+            else:
+                _hud_state["user_hidden"] = False
+                _hud_show_noactivate()
+        elif action == 2:
+            _hud_state["click_through"] = not _hud_state["click_through"]
+            _hud_apply_style(_hud_state["click_through"])
+            _log(f"HUD >> {'點擊穿透（不影響遊戲操作）' if _hud_state['click_through'] else '可拖動模式'}")
+        elif 11 <= action <= 15:
+            _mark_enemy_spell(action - 10, other=False)
+        elif 21 <= action <= 25:
+            _mark_enemy_spell(action - 20, other=True)
+    except Exception as e:
+        _log(f"HUD_HOTKEY_ERR >> {e}")
+
+
 def _hud_hotkeys():
-    """全域快捷鍵：Ctrl+Alt+H 顯示/隱藏 HUD；Ctrl+Alt+J 切換「點擊穿透 / 可拖動」。"""
+    """路徑一：RegisterHotKey 全域快捷鍵。
+    Ctrl+Alt+H 顯示/隱藏；Ctrl+Alt+J 切換點擊穿透/可拖動；Ctrl+Alt+1~5 敵方閃現；+Shift 另一招。"""
     import ctypes
     from ctypes import wintypes
     u = ctypes.windll.user32
     MOD = 0x1 | 0x2 | 0x4000        # ALT | CTRL | NOREPEAT
-    ok_h = u.RegisterHotKey(None, 1, MOD, 0x48)     # H
-    ok_j = u.RegisterHotKey(None, 2, MOD, 0x4A)     # J
     bad = []
-    for n in range(1, 6):                           # 0x31 = '1'
-        if not u.RegisterHotKey(None, 10 + n, MOD, 0x30 + n):
-            bad.append(f"Ctrl+Alt+{n}")
-        if not u.RegisterHotKey(None, 20 + n, MOD | 0x4, 0x30 + n):    # 0x4 = SHIFT
-            bad.append(f"Ctrl+Alt+Shift+{n}")
-    if not (ok_h and ok_j) or bad:
-        _log(f"HUD_HOTKEY >> 註冊失敗 H={bool(ok_h)} J={bool(ok_j)} 其他={bad}（可能被其他程式佔用）")
+    table = [(1, MOD, 0x48, "H"), (2, MOD, 0x4A, "J")]
+    for n in range(1, 6):
+        table.append((10 + n, MOD, 0x30 + n, f"{n}"))
+        table.append((20 + n, MOD | 0x4, 0x30 + n, f"Shift+{n}"))
+    for aid, mod, vk, nm in table:
+        if not u.RegisterHotKey(None, aid, mod, vk):
+            bad.append(nm)
+    if bad:
+        _log(f"HUD_HOTKEY >> RegisterHotKey 註冊失敗: {bad}（改由按鍵輪詢備援處理）")
     msg = wintypes.MSG()
     while u.GetMessageW(ctypes.byref(msg), None, 0, 0) != 0:
         if msg.message == 0x0312:                   # WM_HOTKEY
-            try:
-                if msg.wParam == 1:
-                    if _hud_state["visible"]:
-                        _hud_state["user_hidden"] = True
-                        _hud_hide_native()
+            _hotkey_action(int(msg.wParam))
+
+
+def _hud_key_poll():
+    """路徑二（備援）：輪詢實際按鍵狀態。反作弊/其他程式攔截 RegisterHotKey 時仍能運作。
+    只在「Ctrl+Alt 同時按著」時才處理，且只在按下瞬間（邊緣）觸發一次。"""
+    import ctypes
+    gk = ctypes.windll.user32.GetAsyncKeyState
+    keys = {0x48: 1, 0x4A: 2}
+    for n in range(1, 6):
+        keys[0x30 + n] = n
+    prev = set()
+    logged = False
+    while True:
+        time.sleep(0.03)
+        try:
+            ctrl = gk(0x11) & 0x8000
+            alt  = gk(0x12) & 0x8000
+            if not (ctrl and alt):
+                prev.clear()
+                continue
+            shift = bool(gk(0x10) & 0x8000)
+            for vk, n in keys.items():
+                down = bool(gk(vk) & 0x8000)
+                if down and vk not in prev:
+                    prev.add(vk)
+                    if not logged:
+                        _log("HUD_KEYPOLL >> 已偵測到快捷鍵按下（輪詢通道運作中）")
+                        logged = True
+                    if vk in (0x48, 0x4A):
+                        _hotkey_action(n)
                     else:
-                        _hud_state["user_hidden"] = False
-                        _hud_show_noactivate()
-                elif 11 <= msg.wParam <= 15:
-                    _mark_enemy_spell(int(msg.wParam) - 10, other=False)
-                elif 21 <= msg.wParam <= 25:
-                    _mark_enemy_spell(int(msg.wParam) - 20, other=True)
-                elif msg.wParam == 2:
-                    _hud_state["click_through"] = not _hud_state["click_through"]
-                    _hud_apply_style(_hud_state["click_through"])
-                    _log(f"HUD >> {'點擊穿透（不影響遊戲操作）' if _hud_state['click_through'] else '可拖動模式'}")
-            except Exception as e:
-                _log(f"HUD_HOTKEY_ERR >> {e}")
+                        _hotkey_action((20 if shift else 10) + n)
+                elif not down:
+                    prev.discard(vk)
+        except Exception as e:
+            _log(f"HUD_KEYPOLL_ERR >> {e}")
+            time.sleep(2)
 
 
 def _safe_eel_call(name: str, *args):
@@ -3900,6 +3951,7 @@ if __name__ == "__main__":
     if _hud_window:
         threading.Thread(target=_hud_watcher, daemon=True).start()
         threading.Thread(target=_hud_hotkeys, daemon=True).start()
+        threading.Thread(target=_hud_key_poll, daemon=True).start()
 
     try:
         webview.start()
