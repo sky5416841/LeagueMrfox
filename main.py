@@ -1566,6 +1566,73 @@ def _hud_apply_style(click_through: bool):
     return True
 
 
+_HUD_POS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "hud_pos.json")
+_HUD_CORNERS = ["tr", "tl", "bl", "br"]          # Ctrl+Alt+K 依序循環：右上→左上→左下→右下
+try:
+    with open(_HUD_POS_FILE, encoding="utf-8") as _f:
+        _hud_pos = json.load(_f)
+except Exception:
+    _hud_pos = {"corner": "tr"}
+
+
+def _hud_pos_save():
+    try:
+        os.makedirs(os.path.dirname(_HUD_POS_FILE), exist_ok=True)
+        with open(_HUD_POS_FILE, "w", encoding="utf-8") as f:
+            json.dump(_hud_pos, f)
+    except Exception as e:
+        _log(f"HUD_POS_SAVE_ERR >> {e}")
+
+
+def _hud_place(w=None, h=None):
+    """依記住的位置（四角或自訂座標）擺放 HUD，不搶焦點。w/h 為即將套用的尺寸（resize 為非同步）。"""
+    import ctypes
+    from ctypes import wintypes
+    hwnd = _hud_hwnd()
+    if not hwnd:
+        return
+    u = ctypes.windll.user32
+    r = wintypes.RECT()
+    u.GetWindowRect(hwnd, ctypes.byref(r))
+    w = w or (r.right - r.left)
+    h = h or (r.bottom - r.top)
+    if "x" in _hud_pos:
+        x, y = int(_hud_pos["x"]), int(_hud_pos["y"])
+    else:
+        wa = wintypes.RECT()
+        u.SystemParametersInfoW(0x30, 0, ctypes.byref(wa), 0)       # SPI_GETWORKAREA
+        m = 12
+        c = _hud_pos.get("corner", "tr")
+        x = wa.left + m if c in ("tl", "bl") else wa.right - w - m
+        y = wa.top + m if c in ("tl", "tr") else wa.bottom - h - m
+    u.SetWindowPos(hwnd, 0, x, y, 0, 0, 0x1 | 0x4 | 0x10)         # NOSIZE|NOZORDER|NOACTIVATE
+
+
+def _hud_cycle_corner():
+    c = _hud_pos.get("corner", "tr") if "x" not in _hud_pos else "tr"
+    nxt = _HUD_CORNERS[(_HUD_CORNERS.index(c) + 1) % 4] if "x" not in _hud_pos else "tr"
+    _hud_pos.clear()
+    _hud_pos["corner"] = nxt
+    _hud_pos_save()
+    _hud_place()
+    _log(f"HUD >> 位置切換到 {nxt}")
+
+
+def _hud_remember_dragged():
+    """離開拖動模式時，把使用者拖到的位置記下來。"""
+    import ctypes
+    from ctypes import wintypes
+    hwnd = _hud_hwnd()
+    if not hwnd:
+        return
+    r = wintypes.RECT()
+    ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(r))
+    _hud_pos.clear()
+    _hud_pos.update({"x": r.left, "y": r.top})
+    _hud_pos_save()
+    _log(f"HUD >> 記住位置 ({r.left},{r.top})")
+
+
 def _hud_show_noactivate():
     """顯示並置頂，但不搶走遊戲焦點（不使用 pywebview.show()，它會啟用視窗）。"""
     import ctypes
@@ -1582,6 +1649,7 @@ def _hud_show_noactivate():
         _hud_state["inited"] = True
         _hud_apply_style(_hud_state["click_through"])
     u = ctypes.windll.user32
+    _hud_place()
     u.ShowWindow(hwnd, 4)           # SW_SHOWNOACTIVATE
     # HWND_TOPMOST=-1；SWP_NOSIZE|SWP_NOMOVE|SWP_NOACTIVATE = 0x1|0x2|0x10
     u.SetWindowPos(hwnd, -1, 0, 0, 0, 0, 0x13)
@@ -1619,7 +1687,11 @@ def _hotkey_action(action: int):
         elif action == 2:
             _hud_state["click_through"] = not _hud_state["click_through"]
             _hud_apply_style(_hud_state["click_through"])
+            if _hud_state["click_through"]:
+                _hud_remember_dragged()
             _log(f"HUD >> {'點擊穿透（不影響遊戲操作）' if _hud_state['click_through'] else '可拖動模式'}")
+        elif action == 3:
+            _hud_cycle_corner()
         elif 11 <= action <= 15:
             _mark_enemy_spell(action - 10, other=False)
         elif 21 <= action <= 25:
@@ -1636,7 +1708,7 @@ def _hud_hotkeys():
     u = ctypes.windll.user32
     MOD = 0x1 | 0x2 | 0x4000        # ALT | CTRL | NOREPEAT
     bad = []
-    table = [(1, MOD, 0x48, "H"), (2, MOD, 0x4A, "J")]
+    table = [(1, MOD, 0x48, "H"), (2, MOD, 0x4A, "J"), (3, MOD, 0x4B, "K")]
     for n in range(1, 6):
         if not SPELL_TRACKING_ENABLED:
             break
@@ -1658,7 +1730,7 @@ def _hud_key_poll():
     只在「Ctrl+Alt 同時按著」時才處理，且只在按下瞬間（邊緣）觸發一次。"""
     import ctypes
     gk = ctypes.windll.user32.GetAsyncKeyState
-    keys = {0x48: 1, 0x4A: 2}
+    keys = {0x48: 1, 0x4A: 2, 0x4B: 3}
     for n in range(1, 6):
         if SPELL_TRACKING_ENABLED:
             keys[0x30 + n] = n
@@ -1680,7 +1752,7 @@ def _hud_key_poll():
                     if not logged:
                         _log("HUD_KEYPOLL >> 已偵測到快捷鍵按下（輪詢通道運作中）")
                         logged = True
-                    if vk in (0x48, 0x4A):
+                    if vk in (0x48, 0x4A, 0x4B):
                         _hotkey_action(n)
                     else:
                         _hotkey_action((20 if shift else 10) + n)
@@ -1742,7 +1814,10 @@ def hud_resize(height: int):
     """HUD 依內容高度自動縮放（避免下方空白擋住遊戲畫面）。"""
     try:
         if _hud_window:
-            _hud_window.resize(330, max(90, min(int(height), 700)))
+            hh = max(90, min(int(height), 700))
+            _hud_window.resize(330, hh)
+            if "x" not in _hud_pos:
+                _hud_place(330, hh)
     except Exception as e:
         _log(f"HUD_RESIZE_ERR >> {e}")
 
