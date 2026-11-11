@@ -90,7 +90,7 @@ function _fitHeight() {
 
 let _busy = false;
 async function _tick() {
-  if (_busy) return;
+  if (_busy || document.hidden) return;
   _busy = true;
   try { _render(await eel.get_hud_data()()); _fitHeight(); } catch (e) { /* 後端尚未就緒，下一秒再試 */ }
   _busy = false;

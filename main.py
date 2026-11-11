@@ -1302,12 +1302,26 @@ def _build_encounters(count: int = 50) -> dict:
 _LIVE_API = "https://127.0.0.1:2999/liveclientdata"
 
 
+# 遊戲中盡量少吃資源：長連線 + 短暫快取（避免每秒重做 TLS 握手與重複解析大型 JSON）
+_live_session = requests.Session()
+_live_session.verify = False
+_live_cache: dict = {}
+_LIVE_TTL = {"playerlist": 3, "eventdata": 3, "activeplayername": 30}
+
+
 def _live_get(path: str):
     """讀取遊戲內即時資料 API（僅在對局進行中開放）；失敗回傳 None。"""
+    ttl = _LIVE_TTL.get(path, 0)
+    now = time.time()
+    hit = _live_cache.get(path)
+    if hit and now - hit[0] < ttl:
+        return hit[1]
     try:
-        r = requests.get(f"{_LIVE_API}/{path}", timeout=1.0, verify=False)
+        r = _live_session.get(f"{_LIVE_API}/{path}", timeout=1.0)
         r.raise_for_status()
-        return r.json()
+        data = r.json()
+        _live_cache[path] = (now, data)
+        return data
     except Exception:
         return None
 
@@ -1421,10 +1435,14 @@ def _compute_objectives(events: list, now: float, my_team: str) -> list:
         rem = round(_INHIB_RESPAWN - (now - t))
         if rem <= 0:
             continue
-        parts = nm.split("_")                                  # Barracks_T1_L1
-        team_tag = parts[1] if len(parts) > 1 else ""
-        lane = _LANE_NAME.get(parts[2][:1], "") if len(parts) > 2 else ""
-        mine = (team_tag == "T1") == (my_team in ("", "ORDER"))   # T1 = 藍方(ORDER)
+        # 兩種命名：舊版 Barracks_T1_L1（T1=藍/ORDER）、新版 Inhib_TOrder_L0_P1_...（TOrder / TChaos）
+        low = nm.lower()
+        order_side = ("order" in low) or ("_t1_" in low + "_")
+        parts = nm.split("_")
+        lane = ""
+        if parts and parts[0] == "Barracks" and len(parts) > 2:
+            lane = _LANE_NAME.get(parts[2][:1], "")             # 新版 L0/L1/L2 對應路線未證實，不顯示
+        mine = order_side == (my_team in ("", "ORDER"))
         out.append({"key": "inhib", "label": f"{'我方' if mine else '敵方'}{lane}水晶", "remaining": rem,
                     "side": "my" if mine else "enemy"})
     return out
@@ -1737,7 +1755,7 @@ def _hud_key_poll():
     prev = set()
     logged = False
     while True:
-        time.sleep(0.03)
+        time.sleep(0.06)
         try:
             ctrl = gk(0x11) & 0x8000
             alt  = gk(0x12) & 0x8000

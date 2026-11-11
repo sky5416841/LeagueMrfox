@@ -1519,6 +1519,7 @@ let _inGame = false;
 let _lcuOnline = false;
 eel.expose(on_game_status);
 function on_game_status(inGame) {
+  document.body.classList.toggle('in-game', !!inGame);   // 遊戲中停掉動畫，減少對遊戲 FPS 的影響
   _inGame = !!inGame;
   if (!_lcuOnline) _renderOfflineState();
 }

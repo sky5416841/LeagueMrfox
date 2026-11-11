@@ -1687,3 +1687,5 @@ body, input, button, textarea {
 .enc-rank-stat { font-weight:700; white-space:nowrap; }
 .enc-rank-sub { font-size:9px; color:#64748b; font-weight:400; }
 .enc-rank-empty { font-size:10px; color:#475569; padding:6px 2px; }
+
+body.in-game *, body.in-game *::before, body.in-game *::after { animation: none !important; }
