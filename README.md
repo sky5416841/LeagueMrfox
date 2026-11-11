@@ -26,7 +26,7 @@
   <img src="https://img.shields.io/github/v/release/sky5416841/LeagueMrfox?style=flat-square&color=blue">
   <img src="https://img.shields.io/badge/platform-Windows-informational?style=flat-square">
   <img src="https://img.shields.io/badge/python-3.13-green?style=flat-square">
-  <img src="https://img.shields.io/badge/version-1.6-cyan?style=flat-square">
+  <img src="https://img.shields.io/badge/version-1.7-cyan?style=flat-square">
 </p>
 
 ---
@@ -49,9 +49,12 @@
 | **常駐戰術浮窗** 🆕 | 選角階段自動彈出 always-on-top 小浮窗，全螢幕客戶端上也看得到戰術分析與 meta 建議禁用 |
 | **OP.GG 攻略** | 整合 OP.GG 符文 / 出裝 / 召喚師技能 / 技能加點，選角時依英雄自動帶出 |
 | **大混戰 (Kiwi)** 🆕 | 完整支援大混戰模式：增幅排行 TOP30（S→E tier 排序）、平衡調整數值整合、自動偵測模式 |
+| **遊戲中 HUD** 🆕 | 對局中自動彈出置頂半透明小視窗（點擊穿透、不搶焦點、不影響遊戲操作；只有你看得到）：全場 10 人戰績雷達、即時 KDA / 等級 / 補刀、死亡倒數、小龍 / 遠古龍 / 男爵 / 水晶重生計時。Ctrl+Alt+H 顯示 / 隱藏、K 切換四個角落、J 自由拖動並記住位置 |
+| **勝率預測 / 福星剋星榜** 🆕 | 依雙方近期戰力預測勝率；統計近百場中同隊勝率最高（福星）與對戰勝率最低（剋星）的玩家，並標示「遇過」 |
+| **英雄池分析** 🆕 | 每位玩家的英雄池大小與類型（專精 / 廣泛）、各英雄 KDA 與佔比 |
 | **日誌 Console** | 獨立全螢幕分頁顯示系統日誌，支援文字選取複製 |
 
-> 🆕 = V1.6 新增。本版重點為大混戰 (Kiwi) 模式完整支援；另含模式偵測修正與匿名玩家補名強化。
+> 🆕 = V1.7 新增。本版重點為遊戲中 HUD、勝率預測與英雄池分析；另修正連線自動重連、對局天賦顯示與英雄清單載入。
 
 ### 支援模式
 
