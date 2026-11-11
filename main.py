@@ -1813,6 +1813,9 @@ def _hud_watcher():
 def hud_resize(height: int):
     """HUD 依內容高度自動縮放（避免下方空白擋住遊戲畫面）。"""
     try:
+        if not _hud_state.get("visible"):
+            _hud_hide_native()          # 遊戲外不縮放、並確保 HUD 不會露出空白框
+            return
         if _hud_window:
             hh = max(90, min(int(height), 700))
             _hud_window.resize(330, hh)
@@ -2376,7 +2379,7 @@ def _load_champ_summary():
     if _champ_summary_loaded:
         return
     try:
-        data = _client.get("/lol-game-data/v1/champion-summary", timeout=10)
+        data = _client.get("/lol-game-data/assets/v1/champion-summary.json", timeout=10)
         count = 0
         for c in data:
             cid   = int(c.get("id", -1))
@@ -3475,30 +3478,12 @@ def get_game_detail(game_id: int) -> dict:
             if not perk0 and perk_ids:
                 perk0 = perk_ids[0]
 
-            # 次級符文：遞迴暴力掃描整個玩家 JSON，找出所有 8000~9999 範圍的符文 ID
-            def _scan_rune_ids(obj, found: set):
-                if isinstance(obj, dict):
-                    for v in obj.values():
-                        _scan_rune_ids(v, found)
-                elif isinstance(obj, list):
-                    for v in obj:
-                        _scan_rune_ids(v, found)
-                else:
-                    try:
-                        v = int(obj)
-                        if 5000 <= v <= 9999:
-                            found.add(v)
-                    except (TypeError, ValueError):
-                        pass
-
-            scanned: set[int] = set()
-            _scan_rune_ids(p, scanned)
-            print(f"DEBUG 掃描結果 PID={pid}: {sorted(scanned)}")
-
-            # 扣除 keystone (perk0)，剩下即次級符文，取前 5，不足補 0
-            minor_perks = [x for x in sorted(scanned) if x != perk0][:5]
-            while len(minor_perks) < 5:
-                minor_perks.append(0)
+            # 其餘符文與副系：LCU 對局資料的 stats.perk1~5、perkSubStyle 是權威來源
+            if not perk_sub_style:
+                perk_sub_style = int(stats.get("perkSubStyle", 0) or 0)
+            minor_perks = [int(stats.get(f"perk{i}", 0) or 0) for i in range(1, 6)]
+            if not any(minor_perks) and perk_ids:
+                minor_perks = (list(perk_ids[1:6]) + [0] * 5)[:5]
 
             entry = {
                 "summonerName": id_map.get(pid, f"Player{pid}"),
