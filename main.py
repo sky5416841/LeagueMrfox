@@ -1696,20 +1696,18 @@ def _hotkey_action(action: int):
     _hotkey_last[action] = now
     try:
         if action == 1:
-            if _hud_state["visible"]:
+            # 單一快捷鍵循環：右上 → 左上 → 左下 → 右下 → 隱藏 → 右上 …
+            cur = _hud_pos.get("corner", "tr") if "x" not in _hud_pos else "tr"
+            if not _hud_state["visible"]:
+                _hud_state["user_hidden"] = False
+                _hud_pos.clear(); _hud_pos["corner"] = "tr"
+                _hud_pos_save()
+                _hud_show_noactivate()
+            elif cur == _HUD_CORNERS[-1]:
                 _hud_state["user_hidden"] = True
                 _hud_hide_native()
             else:
-                _hud_state["user_hidden"] = False
-                _hud_show_noactivate()
-        elif action == 2:
-            _hud_state["click_through"] = not _hud_state["click_through"]
-            _hud_apply_style(_hud_state["click_through"])
-            if _hud_state["click_through"]:
-                _hud_remember_dragged()
-            _log(f"HUD >> {'點擊穿透（不影響遊戲操作）' if _hud_state['click_through'] else '可拖動模式'}")
-        elif action == 3:
-            _hud_cycle_corner()
+                _hud_cycle_corner()
         elif 11 <= action <= 15:
             _mark_enemy_spell(action - 10, other=False)
         elif 21 <= action <= 25:
@@ -1726,7 +1724,7 @@ def _hud_hotkeys():
     u = ctypes.windll.user32
     MOD = 0x1 | 0x2 | 0x4000        # ALT | CTRL | NOREPEAT
     bad = []
-    table = [(1, MOD, 0x48, "H"), (2, MOD, 0x4A, "J"), (3, MOD, 0x4B, "K")]
+    table = [(1, MOD, 0x48, "H")]
     for n in range(1, 6):
         if not SPELL_TRACKING_ENABLED:
             break
@@ -1748,7 +1746,7 @@ def _hud_key_poll():
     只在「Ctrl+Alt 同時按著」時才處理，且只在按下瞬間（邊緣）觸發一次。"""
     import ctypes
     gk = ctypes.windll.user32.GetAsyncKeyState
-    keys = {0x48: 1, 0x4A: 2, 0x4B: 3}
+    keys = {0x48: 1}
     for n in range(1, 6):
         if SPELL_TRACKING_ENABLED:
             keys[0x30 + n] = n
@@ -1770,7 +1768,7 @@ def _hud_key_poll():
                     if not logged:
                         _log("HUD_KEYPOLL >> 已偵測到快捷鍵按下（輪詢通道運作中）")
                         logged = True
-                    if vk in (0x48, 0x4A, 0x4B):
+                    if vk == 0x48:
                         _hotkey_action(n)
                     else:
                         _hotkey_action((20 if shift else 10) + n)
