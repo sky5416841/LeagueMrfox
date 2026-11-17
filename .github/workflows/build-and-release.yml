@@ -56,8 +56,13 @@ jobs:
             echo "取不到頻道 ID，跳過清空"; exit 0
           fi
           # 2. 用 bot token 取最近 50 則訊息的 ID
-          IDS=$(curl -s -H "Authorization: Bot ${BOT_TOKEN}" \
-            "https://discord.com/api/v10/channels/${CH_ID}/messages?limit=50" | jq -r '.[].id')
+          RESP=$(curl -s -H "Authorization: Bot ${BOT_TOKEN}"             "https://discord.com/api/v10/channels/${CH_ID}/messages?limit=50")
+          # 回傳不是陣列代表 API 報錯（token 失效 / 無權限 / 被限流）：只印出錯誤訊息，不讓整個發布流程中斷
+          IDS=$(echo "$RESP" | jq -r 'if type=="array" then .[].id else empty end')
+          if [ -z "$IDS" ]; then
+            echo "沒有可清除的訊息，或 Discord 回應錯誤：$(echo "$RESP" | jq -r 'if type=="object" then (.message // "無訊息") + " (code " + ((.code // 0)|tostring) + ")" else "空頻道" end')"
+            exit 0
+          fi
           # 3. 逐一刪除（單刪相容 14 天以上舊訊息）
           for ID in $IDS; do
             curl -s -X DELETE -H "Authorization: Bot ${BOT_TOKEN}" \
@@ -109,6 +114,7 @@ jobs:
           echo "msg_id=$(echo "$RESPONSE" | jq -r '.id')" >> $GITHUB_OUTPUT
 
       - name: 🔢 更新版本語音頻道名稱
+        continue-on-error: true
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           VERSION_CHANNEL_ID: ${{ secrets.VERSION_CHANNEL_ID }}
