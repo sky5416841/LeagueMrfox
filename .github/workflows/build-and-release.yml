@@ -94,12 +94,16 @@ jobs:
         env:
           DISCORD_WEBHOOK_NEWS: ${{ secrets.DISCORD_WEBHOOK_NEWS }}
           ROLE_ID: ${{ secrets.LEAGUEMRFOX_ROLE_ID }}
+          EVENT: ${{ github.event_name }}
         run: |
+          # 只有正式發布 Release 才 @ 身分組；手動觸發（測試）不標記任何人
+          MENTION="<@&${ROLE_ID}>"; ROLES="\"${ROLE_ID}\""
+          if [ "$EVENT" != "release" ]; then MENTION=""; ROLES=""; fi
           RESPONSE=$(curl -s -X POST "${DISCORD_WEBHOOK_NEWS}?wait=true" \
             -H "Content-Type: application/json" \
             -d "{
-              \"content\": \"<@&${ROLE_ID}>\",
-              \"allowed_mentions\": {\"roles\": [\"${ROLE_ID}\"]},
+              \"content\": \"${MENTION}\",
+              \"allowed_mentions\": {\"roles\": [${ROLES}]},
               \"embeds\": [{
                 \"title\": \"🦊 LeagueMrfox ${{ steps.info.outputs.tag }} 已更新！\",
                 \"color\": 1752220,
